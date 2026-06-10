@@ -8,7 +8,7 @@ import (
 
 func TestDefaultEnablesCoreTools(t *testing.T) {
 	d := Default()
-	for _, name := range []string{"osv-scanner", "trivy", "gitleaks", "gosec", "govulncheck"} {
+	for _, name := range []string{"osv-scanner", "trivy", "gitleaks", "gosec", "govulncheck", "semgrep", "zizmor", "guarddog"} {
 		tc, ok := d.Tools[name]
 		if !ok || !tc.Enabled {
 			t.Errorf("default should enable %s", name)
@@ -59,6 +59,22 @@ tools:
 	// Untouched defaults survive the overlay.
 	if !cfg.Tools["trivy"].Enabled {
 		t.Errorf("trivy should remain enabled after overlay")
+	}
+}
+
+func TestLoadImagesRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scanctl.yml")
+	yml := "images:\n  - ghcr.io/x/app:1.2.3\n  - docker.io/library/nginx:1.27\n"
+	if err := os.WriteFile(path, []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Images) != 2 || cfg.Images[0] != "ghcr.io/x/app:1.2.3" {
+		t.Errorf("images = %v, want the two configured refs", cfg.Images)
 	}
 }
 

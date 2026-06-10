@@ -65,6 +65,9 @@ type Config struct {
 	Tools map[string]ToolConfig `yaml:"tools"`
 	// Ignore globs, applied during detection and passed to tools that accept them.
 	Ignore []string `yaml:"ignore"`
+	// Images are container refs to scan with trivy image (in addition to the fs
+	// scan). Empty = no image scan; only repos that ship images set this.
+	Images []string `yaml:"images"`
 	// Upload targets the aggregation plane (P2/P3); empty = serverless (v1).
 	Upload UploadConfig `yaml:"upload"`
 }
@@ -106,16 +109,23 @@ type DependencyTrackConfig struct {
 // Default returns the zero-config baseline: sellable profile, high floor, the
 // v1 core scanners enabled with the same block/report split catena-ce uses
 // today (osv/trivy/govulncheck block; gitleaks/gosec report until baselined).
+// The added scanners (semgrep, zizmor, guarddog) start in report mode like
+// gosec/gitleaks -- promote to block per repo after the baseline is
+// acknowledged. semgrep is fullOnly, so it only actually runs under the "full"
+// profile (catena's internal scanctl.yml sets that).
 func Default() Config {
 	return Config{
 		Profile: ProfileSellable,
 		Gate:    GateConfig{Floor: SevHigh},
 		Tools: map[string]ToolConfig{
-			"osv-scanner":  {Enabled: true, Mode: ModeBlock},
-			"trivy":        {Enabled: true, Mode: ModeBlock},
-			"govulncheck":  {Enabled: true, Mode: ModeBlock},
-			"gosec":        {Enabled: true, Mode: ModeReport},
-			"gitleaks":     {Enabled: true, Mode: ModeReport},
+			"osv-scanner": {Enabled: true, Mode: ModeBlock},
+			"trivy":       {Enabled: true, Mode: ModeBlock},
+			"govulncheck": {Enabled: true, Mode: ModeBlock},
+			"gosec":       {Enabled: true, Mode: ModeReport},
+			"gitleaks":    {Enabled: true, Mode: ModeReport},
+			"semgrep":     {Enabled: true, Mode: ModeReport},
+			"zizmor":      {Enabled: true, Mode: ModeReport},
+			"guarddog":    {Enabled: true, Mode: ModeReport},
 		},
 		Ignore: []string{".git", "vendor", "node_modules", "testdata"},
 	}
@@ -149,6 +159,9 @@ func Load(path string) (Config, error) {
 	}
 	if fromFile.Ignore != nil {
 		cfg.Ignore = fromFile.Ignore
+	}
+	if fromFile.Images != nil {
+		cfg.Images = fromFile.Images
 	}
 	cfg.Upload = fromFile.Upload
 	switch cfg.Profile {

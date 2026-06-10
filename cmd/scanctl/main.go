@@ -50,6 +50,7 @@ usage:
 run flags:
   -config string   path to scanctl.yml (default "scanctl.yml"; missing = defaults)
   -lock string     path to tools.lock (default: embedded copy)
+  -profile string  override the config profile ("sellable" or "full")
   -out string      merged SARIF output path (default "scanctl.sarif")
   -summary string  markdown summary output path (default: stdout only)
   -sbom string     write a CycloneDX SBOM to this path (syft)
@@ -64,6 +65,7 @@ func runCmd(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	cfgPath := fs.String("config", "scanctl.yml", "")
 	lockPath := fs.String("lock", "", "")
+	profile := fs.String("profile", "", "")
 	outPath := fs.String("out", "scanctl.sarif", "")
 	summaryPath := fs.String("summary", "", "")
 	sbomOut := fs.String("sbom", "", "")
@@ -79,6 +81,13 @@ func runCmd(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		return 2
+	}
+	if *profile != "" {
+		if *profile != config.ProfileSellable && *profile != config.ProfileFull {
+			fmt.Fprintf(os.Stderr, "config: invalid -profile %q (want %q or %q)\n", *profile, config.ProfileSellable, config.ProfileFull)
+			return 2
+		}
+		cfg.Profile = *profile
 	}
 
 	lock, err := loadLock(*lockPath)

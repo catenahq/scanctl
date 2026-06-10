@@ -26,11 +26,13 @@ const (
 )
 
 // Result is the set of detected ecosystems, whether any dependency
-// lockfile/manifest exists (the trigger for SCA tools), and a language census.
+// lockfile/manifest exists (the trigger for SCA tools), whether the repo has
+// GitHub Actions workflows (the trigger for zizmor), and a language census.
 type Result struct {
-	Ecosystems  map[Ecosystem]bool
-	HasLockfile bool
-	Languages   map[string]int // enry language name -> file count (non-vendored)
+	Ecosystems   map[Ecosystem]bool
+	HasLockfile  bool
+	HasWorkflows bool
+	Languages    map[string]int // enry language name -> file count (non-vendored)
 }
 
 // Has reports whether ecosystem e was detected.
@@ -93,6 +95,15 @@ func walk(fsys fs.FS, ignore []string) (Result, error) {
 				return fs.SkipDir
 			}
 			return nil
+		}
+		// Workflow detection runs before the vendor filter: enry classifies
+		// .github/ as vendored, which would otherwise suppress it. fs.FS paths
+		// are always slash-separated, so a prefix check is exact.
+		if strings.HasPrefix(path, ".github/workflows/") {
+			lower := strings.ToLower(d.Name())
+			if strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml") {
+				res.HasWorkflows = true
+			}
 		}
 		if enry.IsVendor(path) || enry.IsGenerated(path, nil) {
 			return nil

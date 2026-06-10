@@ -28,3 +28,13 @@ tools:
     repo: anchore/syft
     # renovate: datasource=github-releases depName=anchore/syft
     version: 1.45.1
+  semgrep:
+    # renovate: datasource=pypi depName=semgrep
+    version: 1.165.0
+  zizmor:
+    repo: zizmorcore/zizmor
+    # renovate: datasource=github-releases depName=zizmorcore/zizmor
+    version: 1.25.2
+  guarddog:
+    # renovate: datasource=pypi depName=guarddog
+    version: 2.10.0

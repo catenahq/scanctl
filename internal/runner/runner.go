@@ -60,7 +60,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 			out.Skipped[td.name] = "fetch failed"
 			continue
 		}
-		rep, warn := runTool(ctx, td, bin, root)
+		rep, warn := runTool(ctx, td, bin, root, det)
 		if warn != "" {
 			out.Warnings = append(out.Warnings, warn)
 		}
@@ -72,6 +72,13 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 		out.Report.Merge(rep)
 		out.Ran = append(out.Ran, td.name)
 	}
+
+	// Steps whose shape the detect-driven registry does not fit (per-manifest,
+	// per-image) run after the loop and merge into the same report. Like
+	// runTool, a failure is a warning, never fatal (robustness over strictness).
+	guarddogStep(ctx, cfg, lock, root, out)
+	imageStep(ctx, cfg, lock, out)
+
 	return out, nil
 }
 
@@ -81,7 +88,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 //   - no report, clean exit      -> tool ran and found nothing (some tools, e.g.
 //     gosec, write no file when clean): an empty report, no warning
 //   - no report, non-zero exit   -> a genuine failure: nil + a warning
-func runTool(ctx context.Context, td toolDef, bin, root string) (*sarif.Report, string) {
+func runTool(ctx context.Context, td toolDef, bin, root string, det detect.Result) (*sarif.Report, string) {
 	outFile, err := os.CreateTemp("", "scanctl-"+td.name+"-*.sarif")
 	if err != nil {
 		return nil, fmt.Sprintf("%s: temp file: %v", td.name, err)
@@ -90,7 +97,7 @@ func runTool(ctx context.Context, td toolDef, bin, root string) (*sarif.Report, 
 	_ = outFile.Close()
 	defer os.Remove(outPath)
 
-	inv := td.invoke(bin, root, outPath)
+	inv := td.invoke(bin, root, outPath, det)
 	// #nosec G204 -- bin and args come from the internal tool registry + pinned
 	// tools.lock, never from the scanned repo or user input
 	cmd := exec.CommandContext(ctx, bin, inv.args...)
@@ -119,6 +126,52 @@ func runTool(ctx context.Context, td toolDef, bin, root string) (*sarif.Report, 
 		return emptyReport(td.name), "" // ran clean, no findings, no file written
 	}
 	return nil, fmt.Sprintf("%s: no SARIF produced: %v\n%s", td.name, runErr, diag)
+}
+
+// mergeSARIFRun executes cmd for a non-registry step, reads SARIF from outPath
+// (or from stdout when stdoutToOut), tags it driver=driver, and merges it into
+// out.Report. A failure is recorded as a warning, never fatal (same robustness
+// contract as runTool). It returns whether a report merged, so the caller can
+// record the step in out.Ran exactly once. driver controls gate mapping: image
+// findings are tagged "trivy" so they inherit trivy's block/report mode.
+func mergeSARIFRun(driver string, cmd *exec.Cmd, outPath string, stdoutToOut bool, out *Outcome) bool {
+	var runErr error
+	var diag string
+	if stdoutToOut {
+		f, err := os.Create(outPath) // #nosec G304 -- outPath is our own CreateTemp file
+		if err != nil {
+			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: %v", driver, err))
+			return false
+		}
+		cmd.Stdout = f
+		diag, runErr = captureStderr(cmd)
+		_ = f.Close()
+	} else {
+		var combined []byte
+		combined, runErr = cmd.CombinedOutput()
+		diag = string(combined)
+	}
+	rep := parseIfPresent(outPath)
+	if rep == nil {
+		if runErr != nil {
+			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: no SARIF produced: %v\n%s", driver, runErr, diag))
+		}
+		return false
+	}
+	tagDriver(rep, driver)
+	out.Report.Merge(rep)
+	return true
+}
+
+// trivyEnsure returns the pinned trivy binary, reusing the registry entry's
+// fetch closure so the fs scan and image scan share one download.
+func trivyEnsure(ctx context.Context, version string) (string, error) {
+	for _, td := range registry {
+		if td.name == "trivy" {
+			return td.ensure(ctx, version)
+		}
+	}
+	return "", fmt.Errorf("trivy not in registry")
 }
 
 // parseOutput turns a tool's output file into SARIF: directly for SARIF-native

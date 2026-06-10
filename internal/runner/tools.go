@@ -32,7 +32,10 @@ type toolDef struct {
 	fullOnly bool
 	applies  func(detect.Result) bool
 	ensure   func(ctx context.Context, version string) (binPath string, err error)
-	invoke   func(binPath, root, outPath string) invocation
+	// invoke builds the argv. det is passed so a tool can shape its invocation
+	// from what was detected (e.g. semgrep selects rule packs per ecosystem);
+	// tools that do not need it ignore the arg.
+	invoke func(binPath, root, outPath string, det detect.Result) invocation
 	// convert is the adapter seam for tools that do NOT emit SARIF: it turns the
 	// tool's native output bytes into a SARIF report. nil means the tool already
 	// writes SARIF (the v1 core). This is how JSON-only scanners (GuardDog,
@@ -55,7 +58,7 @@ var registry = []toolDef{
 			return fmt.Sprintf("https://github.com/aquasecurity/trivy/releases/download/v%s/trivy_%s_Linux-%s.tar.gz",
 				v, v, trivyArch())
 		}, "trivy"),
-		invoke: func(bin, root, out string) invocation {
+		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			// License scanning is intentionally omitted here: permissive-license
 			// notices are noise, and license *policy* is owned by Dependency-Track
 			// (P3), which reasons over the full SBOM rather than per-file matches.
@@ -73,7 +76,7 @@ var registry = []toolDef{
 			return fmt.Sprintf("https://github.com/google/osv-scanner/releases/download/v%s/osv-scanner_linux_%s",
 				v, runtime.GOARCH)
 		}),
-		invoke: func(bin, root, out string) invocation {
+		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			return invocation{args: []string{
 				"scan", "source", "--recursive", "--format", "sarif", "--output", out, root,
 			}}
@@ -87,7 +90,7 @@ var registry = []toolDef{
 			return fmt.Sprintf("https://github.com/gitleaks/gitleaks/releases/download/v%s/gitleaks_%s_linux_%s.tar.gz",
 				v, v, gitleaksArch())
 		}, "gitleaks"),
-		invoke: func(bin, root, out string) invocation {
+		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			args := []string{"detect", "--source", root, "--report-format", "sarif",
 				"--report-path", out, "--redact"}
 			// Scan full git history when root is a repo; otherwise scan files.
@@ -107,7 +110,7 @@ var registry = []toolDef{
 			return fmt.Sprintf("https://github.com/securego/gosec/releases/download/v%s/gosec_%s_linux_%s.tar.gz",
 				v, v, runtime.GOARCH)
 		}, "gosec"),
-		invoke: func(bin, root, out string) invocation {
+		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			return invocation{
 				args:    []string{"-fmt", "sarif", "-out", out, "-quiet", "-no-fail", "./..."},
 				workdir: root,
@@ -121,13 +124,80 @@ var registry = []toolDef{
 		ensure: func(ctx context.Context, version string) (string, error) {
 			return goInstall(ctx, "golang.org/x/vuln", "cmd/govulncheck", version)
 		},
-		invoke: func(bin, root, out string) invocation {
+		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			return invocation{
 				args:        []string{"-C", root, "-format", "sarif", "./..."},
 				stdoutToOut: true,
 			}
 		},
 	},
+	{
+		// semgrep SAST. fullOnly: the registry rule packs (p/...) are resale-
+		// restricted, so it runs only under the "full" profile. Packs are
+		// auto-selected from the detected ecosystems (mirrors the per-repo
+		// --config choices the standalone semgrep workflows used). --error is
+		// omitted: scanctl's severity gate decides blocking, not semgrep's exit
+		// code (runTool treats non-zero + SARIF as findings, not failure).
+		name:     "semgrep",
+		scanType: "Semgrep JSON Report",
+		fullOnly: true,
+		applies:  func(r detect.Result) bool { return r.Has(detect.Go) || r.Has(detect.Node) || r.Has(detect.Python) },
+		ensure: func(ctx context.Context, version string) (string, error) {
+			return pyInstall(ctx, "semgrep", version, "semgrep")
+		},
+		invoke: func(bin, root, out string, det detect.Result) invocation {
+			args := []string{"scan", "--metrics=off", "--sarif-output", out, "--quiet"}
+			for _, cfg := range semgrepConfigs(det) {
+				args = append(args, "--config", cfg)
+			}
+			args = append(args, root)
+			return invocation{args: args}
+		},
+	},
+	{
+		// zizmor: GitHub Actions workflow audit (Rust binary, SARIF-native).
+		// Resale-clean (MIT/Apache). Some audits call the GitHub API; we honor
+		// GH_TOKEN when present and run --offline otherwise so a tokenless run
+		// still produces the static-analysis findings.
+		name:     "zizmor",
+		scanType: "SARIF",
+		applies:  func(r detect.Result) bool { return r.HasWorkflows },
+		ensure: ghTarGz("zizmor", func(v string) string {
+			return fmt.Sprintf("https://github.com/zizmorcore/zizmor/releases/download/v%s/zizmor-%s-unknown-linux-gnu.tar.gz",
+				v, zizmorArch())
+		}, "zizmor"),
+		invoke: func(bin, root, out string, _ detect.Result) invocation {
+			args := []string{"--format", "sarif", "--persona", "regular"}
+			if os.Getenv("GH_TOKEN") == "" {
+				args = append(args, "--offline")
+			}
+			args = append(args, root)
+			return invocation{args: args, stdoutToOut: true}
+		},
+	},
+}
+
+// semgrepConfigs maps detected ecosystems to semgrep registry rule packs. The
+// OWASP Top Ten pack always runs; language packs are added per detected
+// ecosystem. Order is stable for testability; the root pack is implicit (none).
+func semgrepConfigs(det detect.Result) []string {
+	cfgs := []string{"p/owasp-top-ten"}
+	if det.Has(detect.Go) {
+		cfgs = append(cfgs, "p/golang")
+	}
+	if det.Has(detect.Python) {
+		cfgs = append(cfgs, "p/python")
+	}
+	if det.Has(detect.Node) {
+		cfgs = append(cfgs, "p/javascript", "p/typescript")
+	}
+	if det.Has(detect.Docker) {
+		cfgs = append(cfgs, "p/dockerfile")
+	}
+	if det.Has(detect.Terraform) {
+		cfgs = append(cfgs, "p/terraform")
+	}
+	return cfgs
 }
 
 // trivyArch maps GOARCH to trivy's asset token.
@@ -144,6 +214,14 @@ func gitleaksArch() string {
 		return "arm64"
 	}
 	return "x64"
+}
+
+// zizmorArch maps GOARCH to zizmor's release-asset target triple token.
+func zizmorArch() string {
+	if runtime.GOARCH == "arm64" {
+		return "aarch64"
+	}
+	return "x86_64"
 }
 
 // ghBinary returns an ensure func for a plain (non-archive) release binary,

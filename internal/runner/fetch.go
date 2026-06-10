@@ -152,3 +152,29 @@ func goInstall(ctx context.Context, module, cmdSubpath, version string) (string,
 	}
 	return dest, nil
 }
+
+// pyInstall installs a pinned PyPI tool with `uv tool install pkg==version` into
+// a per-version cache dir and returns the resolved entry-point path. uv is a
+// runner prerequisite (the same uv that backs `uvx` in the existing per-repo
+// workflows). The tool venv (UV_TOOL_DIR) and its console scripts
+// (UV_TOOL_BIN_DIR) are isolated per pin so binName is stable across versions;
+// the version is carried by the directory, like goInstall.
+func pyInstall(ctx context.Context, pkg, version, binName string) (string, error) {
+	toolDir := filepath.Join(cacheRoot(), pkg+"-"+version)
+	binDir := filepath.Join(toolDir, "bin")
+	dest := filepath.Join(binDir, binName)
+	if fi, err := os.Stat(dest); err == nil && !fi.IsDir() {
+		return dest, nil
+	}
+	if err := os.MkdirAll(binDir, 0o750); err != nil {
+		return "", err
+	}
+	spec := pkg + "==" + version
+	// #nosec G204 -- spec is built from the pinned tools.lock (pkg + version), not user input
+	cmd := exec.CommandContext(ctx, "uv", "tool", "install", "--force", spec)
+	cmd.Env = append(os.Environ(), "UV_TOOL_DIR="+toolDir, "UV_TOOL_BIN_DIR="+binDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("uv tool install %s: %w\n%s", spec, err, out)
+	}
+	return dest, nil
+}

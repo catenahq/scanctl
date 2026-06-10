@@ -59,24 +59,35 @@ func TestProfileAllows(t *testing.T) {
 	}
 }
 
-func TestCoreRegistryIsResaleClean(t *testing.T) {
+func TestSellableProfileExcludesFullOnly(t *testing.T) {
+	// fullOnly tools (e.g. semgrep registry packs) must never run under sellable.
 	for _, td := range registry {
-		if td.fullOnly {
-			t.Errorf("core tool %q is marked full-only; the default core must be resale-clean", td.name)
+		if td.fullOnly && profileAllows(td, config.ProfileSellable) {
+			t.Errorf("fullOnly tool %q must not be allowed under the sellable profile", td.name)
+		}
+	}
+	// The resale-clean core must stay sellable (not accidentally marked fullOnly).
+	clean := map[string]bool{
+		"trivy": true, "osv-scanner": true, "gitleaks": true,
+		"gosec": true, "govulncheck": true, "zizmor": true,
+	}
+	for _, td := range registry {
+		if clean[td.name] && td.fullOnly {
+			t.Errorf("core tool %q must be resale-clean (not fullOnly)", td.name)
 		}
 	}
 }
 
 // noOutput runs the given system binary, which writes no SARIF file.
 func noOutputTool() toolDef {
-	return toolDef{name: "fake", invoke: func(bin, root, out string) invocation {
+	return toolDef{name: "fake", invoke: func(bin, root, out string, _ detect.Result) invocation {
 		return invocation{}
 	}}
 }
 
 func TestRunToolCleanExitNoOutputIsEmptyReport(t *testing.T) {
 	// `true` exits 0 and writes nothing -> ran clean, zero findings, no warning.
-	rep, warn := runTool(context.Background(), noOutputTool(), "/bin/true", ".")
+	rep, warn := runTool(context.Background(), noOutputTool(), "/bin/true", ".", detect.Result{})
 	if warn != "" {
 		t.Errorf("clean exit should not warn: %q", warn)
 	}
@@ -90,7 +101,7 @@ func TestRunToolCleanExitNoOutputIsEmptyReport(t *testing.T) {
 
 func TestRunToolFailureNoOutputWarns(t *testing.T) {
 	// `false` exits 1 and writes nothing -> genuine failure: nil + warning.
-	rep, warn := runTool(context.Background(), noOutputTool(), "/bin/false", ".")
+	rep, warn := runTool(context.Background(), noOutputTool(), "/bin/false", ".", detect.Result{})
 	if rep != nil {
 		t.Error("failure with no output should be nil")
 	}

@@ -30,6 +30,30 @@ func TestDetectEcosystems(t *testing.T) {
 	}
 }
 
+func TestDetectWorkflows(t *testing.T) {
+	with := fstest.MapFS{
+		".github/workflows/ci.yml":      {Data: []byte("on: push")},
+		".github/workflows/release.yaml": {Data: []byte("on: push")},
+	}
+	res, err := DetectFS(with, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.HasWorkflows {
+		t.Error("expected HasWorkflows true for .github/workflows/*.yml")
+	}
+
+	// A yaml outside .github/workflows must not set HasWorkflows.
+	without := fstest.MapFS{"config/app.yaml": {Data: []byte("k: v")}}
+	res, err = DetectFS(without, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.HasWorkflows {
+		t.Error("expected HasWorkflows false for a non-workflow yaml")
+	}
+}
+
 func TestDetectEmptyRepo(t *testing.T) {
 	res, err := DetectFS(fstest.MapFS{"README.md": {Data: []byte("hi")}}, nil)
 	if err != nil {
