@@ -154,6 +154,25 @@ func TestParseLock(t *testing.T) {
 	}
 }
 
+func TestGuarddogVerifiesGoModules(t *testing.T) {
+	// GuardDog's malicious-package coverage must include Go (go.mod) -- this is
+	// what replaces Socket for Go repos. pypi/npm are also expected.
+	want := map[string]string{
+		"pypi": "requirements.txt",
+		"npm":  "package-lock.json",
+		"go":   "go.mod",
+	}
+	got := map[string]string{}
+	for _, m := range guarddogManifests {
+		got[m.ecosystem] = m.manifest
+	}
+	for eco, manifest := range want {
+		if got[eco] != manifest {
+			t.Errorf("guarddogManifests[%q] = %q, want %q", eco, got[eco], manifest)
+		}
+	}
+}
+
 func TestAppliesPredicates(t *testing.T) {
 	goRepo := detect.Result{Ecosystems: map[detect.Ecosystem]bool{detect.Go: true}, HasLockfile: true}
 	nonGo := detect.Result{Ecosystems: map[detect.Ecosystem]bool{detect.Python: true}}

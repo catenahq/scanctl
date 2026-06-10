@@ -21,7 +21,7 @@ resale-restricted and runs only under the `full` profile (see Profiles).
 | [gosec](https://github.com/securego/gosec) | Apache-2.0 | Go SAST (type-aware) | `go.mod` present |
 | [govulncheck](https://golang.org/x/vuln) | BSD-3 | reachability-aware Go vulns | `go.mod` present |
 | [zizmor](https://github.com/zizmorcore/zizmor) | MIT/Apache-2.0 | GitHub Actions workflow audit | `.github/workflows/*.y{a,}ml` present |
-| [guarddog](https://github.com/DataDog/guarddog) | Apache-2.0 | malicious PyPI/npm packages (heuristics) | root `requirements.txt` / `package-lock.json` |
+| [guarddog](https://github.com/DataDog/guarddog) | Apache-2.0 | malicious PyPI/npm/Go packages (heuristics) | root `requirements.txt` / `package-lock.json` / `go.mod` |
 | [semgrep](https://github.com/semgrep/semgrep) | LGPL-2.1 (registry packs restricted) | multi-language SAST (auto-selected packs) | source ecosystem present **and** `profile: full` |
 | trivy (license) | Apache-2.0 | dependency license scan (copyleft/unknown), advisory | always (separate `trivy-license` driver, report-mode) |
 
@@ -33,8 +33,10 @@ are installed with `uv tool install`. **Runner prerequisites:** `go` and `uv`
 on `PATH` (the reusable workflow sets both up).
 
 GuardDog's SARIF comes from its manifest-based `verify` subcommand, so it scans
-only a root `requirements.txt` (PyPI) or `package-lock.json` (npm); nested
-manifests and pyproject-only projects are out of scope for now.
+only a root `requirements.txt` (PyPI), `package-lock.json` (npm), or `go.mod`
+(Go); nested manifests and pyproject-only projects are out of scope for now.
+The Go manifest support is what replaces Socket for Go repos (Socket was dropped
+from the rollout).
 
 The license scan is a second trivy pass under its own `trivy-license` driver
 (report-mode by design: copyleft/unknown licenses are advisory and must not

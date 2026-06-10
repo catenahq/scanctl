@@ -21,6 +21,7 @@ var guarddogManifests = []struct {
 }{
 	{"pypi", "requirements.txt"},
 	{"npm", "package-lock.json"},
+	{"go", "go.mod"},
 }
 
 // guarddogStep runs GuardDog (malicious-package heuristics) over each supported
@@ -42,7 +43,7 @@ func guarddogStep(ctx context.Context, cfg config.Config, lock Lock, root string
 		}
 	}
 	if len(jobs) == 0 {
-		out.Skipped["guarddog"] = "no supported root manifest (requirements.txt / package-lock.json)"
+		out.Skipped["guarddog"] = "no supported root manifest (requirements.txt / package-lock.json / go.mod)"
 		return
 	}
 
