@@ -7,7 +7,7 @@ name: scanctl
 # Caller example:
 #   jobs:
 #     security:
-#       uses: catenahq/scanctl/.github/workflows/github-reusable.yml@v0
+#       uses: catenahq/scanctl/.github/workflows/github-reusable.yml@main
 #       with:
 #         scanctl-version: v0.1.0
 #       permissions:
