@@ -1,6 +1,27 @@
 package sarif
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestNormalizeRendersEmptyResultsArray(t *testing.T) {
+	// A run with nil Results must marshal as [] not null (SARIF schema requires
+	// an array; GitHub code scanning + DefectDojo reject null).
+	r := &Report{Runs: []Run{{Tool: Tool{Driver: Driver{Name: "x"}}}}}
+	r.Normalize()
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"results":null`) {
+		t.Errorf("normalized SARIF still has null results: %s", data)
+	}
+	if !strings.Contains(string(data), `"results":[]`) {
+		t.Errorf("expected empty results array: %s", data)
+	}
+}
 
 func run(tool string, n int) Run {
 	r := Run{Tool: Tool{Driver: Driver{Name: tool}}}

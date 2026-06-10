@@ -142,7 +142,10 @@ func parseOutput(td toolDef, outPath string) *sarif.Report {
 // emptyReport is a zero-finding report carrying the tool's identity, so a clean
 // tool still shows up as having run.
 func emptyReport(name string) *sarif.Report {
-	return &sarif.Report{Runs: []sarif.Run{{Tool: sarif.Tool{Driver: sarif.Driver{Name: name}}}}}
+	return &sarif.Report{Runs: []sarif.Run{{
+		Tool:    sarif.Tool{Driver: sarif.Driver{Name: name}},
+		Results: []sarif.Result{}, // must be [] not null to be valid SARIF
+	}}}
 }
 
 // captureStderr runs cmd (whose Stdout is already wired) capturing stderr.

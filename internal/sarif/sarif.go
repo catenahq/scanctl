@@ -97,6 +97,21 @@ func (dst *Report) Merge(src *Report) {
 	dst.Runs = append(dst.Runs, src.Runs...)
 }
 
+// Normalize guarantees the document validates against the SARIF schema before
+// marshaling: every run's Results must be an array, never null. A tool or
+// converter that leaves Results nil would otherwise emit "results": null, which
+// downstream consumers (GitHub code scanning, DefectDojo) reject.
+func (r *Report) Normalize() {
+	if r.Runs == nil {
+		r.Runs = []Run{}
+	}
+	for i := range r.Runs {
+		if r.Runs[i].Results == nil {
+			r.Runs[i].Results = []Result{}
+		}
+	}
+}
+
 // ResultCount totals findings across all runs.
 func (r *Report) ResultCount() int {
 	n := 0

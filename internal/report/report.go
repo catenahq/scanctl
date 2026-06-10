@@ -14,8 +14,10 @@ import (
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
-// WriteSARIF marshals rep to path with indentation.
+// WriteSARIF marshals rep to path with indentation, after normalizing it so the
+// output is schema-valid (no null results arrays).
 func WriteSARIF(rep *sarif.Report, path string) error {
+	rep.Normalize()
 	data, err := json.MarshalIndent(rep, "", "  ")
 	if err != nil {
 		return err
