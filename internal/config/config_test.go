@@ -62,6 +62,17 @@ tools:
 	}
 }
 
+func TestLoadRejectsInvalidProfile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scanctl.yml")
+	if err := os.WriteFile(path, []byte("profile: bogus\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Error("expected error for invalid profile")
+	}
+}
+
 func TestSeverityRankOrder(t *testing.T) {
 	if !(SevCritical.Rank() > SevHigh.Rank() &&
 		SevHigh.Rank() > SevMedium.Rank() &&

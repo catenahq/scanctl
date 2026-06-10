@@ -151,5 +151,10 @@ func Load(path string) (Config, error) {
 		cfg.Ignore = fromFile.Ignore
 	}
 	cfg.Upload = fromFile.Upload
+	switch cfg.Profile {
+	case ProfileSellable, ProfileFull:
+	default:
+		return cfg, fmt.Errorf("invalid profile %q (want %q or %q)", cfg.Profile, ProfileSellable, ProfileFull)
+	}
 	return cfg, nil
 }

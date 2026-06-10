@@ -4,8 +4,32 @@ import (
 	"context"
 	"testing"
 
+	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/detect"
 )
+
+func TestProfileAllows(t *testing.T) {
+	clean := toolDef{name: "trivy"}
+	restricted := toolDef{name: "semgrep-registry", fullOnly: true}
+
+	if !profileAllows(clean, config.ProfileSellable) || !profileAllows(clean, config.ProfileFull) {
+		t.Error("resale-clean tool should run under both profiles")
+	}
+	if profileAllows(restricted, config.ProfileSellable) {
+		t.Error("full-only tool must not run under sellable")
+	}
+	if !profileAllows(restricted, config.ProfileFull) {
+		t.Error("full-only tool should run under full")
+	}
+}
+
+func TestCoreRegistryIsResaleClean(t *testing.T) {
+	for _, td := range registry {
+		if td.fullOnly {
+			t.Errorf("core tool %q is marked full-only; the default core must be resale-clean", td.name)
+		}
+	}
+}
 
 // noOutput runs the given system binary, which writes no SARIF file.
 func noOutputTool() toolDef {

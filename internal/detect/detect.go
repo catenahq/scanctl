@@ -1,14 +1,17 @@
-// Package detect is the v1 router: it walks the repo for manifest/lockfile
-// markers and reports which ecosystems are present, so the runner only invokes
-// the scanners that apply. This is deliberately a simple filename match; the
-// go-enry content census (vendored/generated filtering, language proportions)
-// is a later phase.
+// Package detect is the router: it walks the repo and reports which ecosystems
+// are present, so the runner only invokes the scanners that apply. Manifest /
+// lockfile filenames are the precise trigger for tool selection; go-enry
+// (GitHub Linguist's data) adds vendored/generated filtering and a language
+// census so scans skip third-party + machine-generated files.
 package detect
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
+
+	enry "github.com/go-enry/go-enry/v2"
 )
 
 // Ecosystem is a detected language/format family.
@@ -22,11 +25,12 @@ const (
 	Docker    Ecosystem = "docker"
 )
 
-// Result is the set of detected ecosystems plus whether any dependency
-// lockfile/manifest exists at all (the trigger for SCA tools).
+// Result is the set of detected ecosystems, whether any dependency
+// lockfile/manifest exists (the trigger for SCA tools), and a language census.
 type Result struct {
-	Ecosystems map[Ecosystem]bool
+	Ecosystems  map[Ecosystem]bool
 	HasLockfile bool
+	Languages   map[string]int // enry language name -> file count (non-vendored)
 }
 
 // Has reports whether ecosystem e was detected.
@@ -62,53 +66,20 @@ var lockfiles = map[string]bool{
 	"Cargo.lock":        true,
 }
 
-// Detect walks root, honoring ignore (path segments matched anywhere in the
-// relative path), and returns the detected ecosystems.
+// Detect walks an on-disk root.
 func Detect(root string, ignore []string) (Result, error) {
-	res := Result{Ecosystems: map[Ecosystem]bool{}}
-	ignoreSet := make(map[string]bool, len(ignore))
-	for _, ig := range ignore {
-		ignoreSet[ig] = true
-	}
-
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			rel = path
-		}
-		if d.IsDir() {
-			if rel != "." && ignoreSet[d.Name()] {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		name := d.Name()
-		if e, ok := manifestMarkers[name]; ok {
-			res.Ecosystems[e] = true
-		}
-		lower := strings.ToLower(name)
-		for suf, e := range suffixMarkers {
-			if strings.HasSuffix(lower, suf) {
-				res.Ecosystems[e] = true
-			}
-		}
-		if lockfiles[name] {
-			res.HasLockfile = true
-		}
-		return nil
-	})
-	if err != nil {
-		return res, err
-	}
-	return res, nil
+	return walk(os.DirFS(root), ignore)
 }
 
-// DetectFS is the io/fs-backed variant used by tests; behaviour matches Detect.
+// DetectFS walks an fs.FS (used by tests). Behaviour matches Detect.
 func DetectFS(fsys fs.FS, ignore []string) (Result, error) {
-	res := Result{Ecosystems: map[Ecosystem]bool{}}
+	return walk(fsys, ignore)
+}
+
+// walk is the shared traversal: skip ignored dirs and enry-vendored files, then
+// classify each remaining file.
+func walk(fsys fs.FS, ignore []string) (Result, error) {
+	res := Result{Ecosystems: map[Ecosystem]bool{}, Languages: map[string]int{}}
 	ignoreSet := make(map[string]bool, len(ignore))
 	for _, ig := range ignore {
 		ignoreSet[ig] = true
@@ -123,20 +94,30 @@ func DetectFS(fsys fs.FS, ignore []string) (Result, error) {
 			}
 			return nil
 		}
-		name := d.Name()
-		if e, ok := manifestMarkers[name]; ok {
-			res.Ecosystems[e] = true
+		if enry.IsVendor(path) || enry.IsGenerated(path, nil) {
+			return nil
 		}
-		lower := strings.ToLower(name)
-		for suf, e := range suffixMarkers {
-			if strings.HasSuffix(lower, suf) {
-				res.Ecosystems[e] = true
-			}
-		}
-		if lockfiles[name] {
-			res.HasLockfile = true
-		}
+		classify(path, d.Name(), &res)
 		return nil
 	})
 	return res, err
+}
+
+// classify records ecosystem/lockfile/language signals for one file.
+func classify(path, name string, res *Result) {
+	if e, ok := manifestMarkers[name]; ok {
+		res.Ecosystems[e] = true
+	}
+	lower := strings.ToLower(name)
+	for suf, e := range suffixMarkers {
+		if strings.HasSuffix(lower, suf) {
+			res.Ecosystems[e] = true
+		}
+	}
+	if lockfiles[name] {
+		res.HasLockfile = true
+	}
+	if lang := enry.GetLanguage(filepath.Base(path), nil); lang != "" {
+		res.Languages[lang]++
+	}
 }

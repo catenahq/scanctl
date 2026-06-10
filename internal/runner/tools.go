@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/detect"
 )
 
@@ -24,9 +25,18 @@ type toolDef struct {
 	name string
 	// scanType is the DefectDojo parser id, recorded for the P2 upload phase.
 	scanType string
+	// fullOnly marks a tool that is resale-restricted (e.g. Semgrep registry
+	// rules, deps.dev): it runs only under the "full" profile. The default core
+	// is resale-clean and runs in both profiles.
+	fullOnly bool
 	applies  func(detect.Result) bool
 	ensure   func(ctx context.Context, version string) (binPath string, err error)
 	invoke   func(binPath, root, outPath string) invocation
+}
+
+// profileAllows reports whether td may run under the given profile.
+func profileAllows(td toolDef, profile string) bool {
+	return !td.fullOnly || profile == config.ProfileFull
 }
 
 // registry is the v1 core: all resale-clean, all SARIF-native.

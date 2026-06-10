@@ -43,6 +43,25 @@ func TestDetectEmptyRepo(t *testing.T) {
 	}
 }
 
+func TestEnryFiltersVendoredWithoutIgnoreEntry(t *testing.T) {
+	// third_party is a vendor pattern enry recognizes even though it is NOT in
+	// the ignore list -- its go.mod must not trigger Go.
+	fsys := fstest.MapFS{
+		"third_party/lib/go.mod": {Data: []byte("module v")},
+		"main.go":                {Data: []byte("package main")},
+	}
+	res, err := DetectFS(fsys, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Has(Go) {
+		t.Error("vendored go.mod (enry-detected) should not trigger Go")
+	}
+	if res.Languages["Go"] == 0 {
+		t.Error("expected non-vendored main.go counted in the language census")
+	}
+}
+
 func TestIgnoreSkipsManifests(t *testing.T) {
 	// A go.mod only under an ignored dir must not register Go.
 	fsys := fstest.MapFS{"third_party/lib/go.mod": {Data: []byte("module z")}}

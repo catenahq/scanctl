@@ -40,6 +40,10 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 			out.Skipped[td.name] = "disabled"
 			continue
 		}
+		if !profileAllows(td, cfg.Profile) {
+			out.Skipped[td.name] = "requires the full profile"
+			continue
+		}
 		if !td.applies(det) {
 			out.Skipped[td.name] = "not applicable to this repo"
 			continue
