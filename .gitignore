@@ -9,3 +9,4 @@ scanctl.summary.md
 # but keep committed test fixtures
 !**/testdata/*.sarif
 !**/testdata/*.cdx.json
+.token-savior-cache.json
