@@ -95,7 +95,8 @@ func Default() Config {
 // runner ignores ones it has no definition for).
 func Load(path string) (Config, error) {
 	cfg := Default()
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is the operator-provided scanctl.yml
+
 	if err != nil {
 		if os.IsNotExist(err) {
 			return cfg, nil

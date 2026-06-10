@@ -1,10 +1,43 @@
 package runner
 
 import (
+	"context"
 	"testing"
 
 	"github.com/catenahq/scanctl/internal/detect"
 )
+
+// noOutput runs the given system binary, which writes no SARIF file.
+func noOutputTool() toolDef {
+	return toolDef{name: "fake", invoke: func(bin, root, out string) invocation {
+		return invocation{}
+	}}
+}
+
+func TestRunToolCleanExitNoOutputIsEmptyReport(t *testing.T) {
+	// `true` exits 0 and writes nothing -> ran clean, zero findings, no warning.
+	rep, warn := runTool(context.Background(), noOutputTool(), "/bin/true", ".")
+	if warn != "" {
+		t.Errorf("clean exit should not warn: %q", warn)
+	}
+	if rep == nil || rep.ResultCount() != 0 {
+		t.Fatalf("clean exit should yield an empty report, got %+v", rep)
+	}
+	if len(rep.Runs) != 1 || rep.Runs[0].Tool.Driver.Name != "fake" {
+		t.Error("empty report should carry the tool name so it counts as ran")
+	}
+}
+
+func TestRunToolFailureNoOutputWarns(t *testing.T) {
+	// `false` exits 1 and writes nothing -> genuine failure: nil + warning.
+	rep, warn := runTool(context.Background(), noOutputTool(), "/bin/false", ".")
+	if rep != nil {
+		t.Error("failure with no output should be nil")
+	}
+	if warn == "" {
+		t.Error("failure with no output should produce a warning")
+	}
+}
 
 func TestParseRealSARIFFixture(t *testing.T) {
 	rep := parseIfPresent("testdata/gosec.sarif")

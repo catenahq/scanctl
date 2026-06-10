@@ -22,7 +22,8 @@ type LockEntry struct {
 
 // LoadLock reads tools.lock at path.
 func LoadLock(path string) (Lock, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is the operator-provided tools.lock
+
 	if err != nil {
 		return Lock{}, fmt.Errorf("read %s: %w", path, err)
 	}

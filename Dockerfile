@@ -16,7 +16,12 @@ FROM golang:1.26-bookworm
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 scanctl
 COPY --from=build /out/scanctl /usr/local/bin/scanctl
+# Run unprivileged. HOME must be writable: go install (govulncheck) writes to
+# $HOME/go + $HOME/.cache, and the scanner cache defaults under $HOME/.cache.
+USER scanctl
+ENV HOME=/home/scanctl
 WORKDIR /repo
 ENTRYPOINT ["scanctl"]
 CMD ["run", "."]

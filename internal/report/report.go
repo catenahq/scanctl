@@ -20,6 +20,8 @@ func WriteSARIF(rep *sarif.Report, path string) error {
 	if err != nil {
 		return err
 	}
+	// #nosec G306 -- a SARIF report is non-sensitive output meant to be read by
+	// CI steps and humans; 0644 is intentional
 	return os.WriteFile(path, data, 0o644)
 }
 

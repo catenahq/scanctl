@@ -71,41 +71,56 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 	return out, nil
 }
 
-// runTool executes one scanner and parses its SARIF. Tool exit codes are
-// ignored on purpose -- scanners signal "findings present" via non-zero, which
-// is not an execution failure. Success is "a parseable report was produced".
+// runTool executes one scanner and parses its SARIF. A non-zero exit is NOT an
+// error by itself -- scanners signal "findings present" that way. The outcomes:
+//   - parseable report          -> findings (or zero) from the tool
+//   - no report, clean exit      -> tool ran and found nothing (some tools, e.g.
+//     gosec, write no file when clean): an empty report, no warning
+//   - no report, non-zero exit   -> a genuine failure: nil + a warning
 func runTool(ctx context.Context, td toolDef, bin, root string) (*sarif.Report, string) {
 	outFile, err := os.CreateTemp("", "scanctl-"+td.name+"-*.sarif")
 	if err != nil {
 		return nil, fmt.Sprintf("%s: temp file: %v", td.name, err)
 	}
 	outPath := outFile.Name()
-	outFile.Close()
+	_ = outFile.Close()
 	defer os.Remove(outPath)
 
 	inv := td.invoke(bin, root, outPath)
+	// #nosec G204 -- bin and args come from the internal tool registry + pinned
+	// tools.lock, never from the scanned repo or user input
 	cmd := exec.CommandContext(ctx, bin, inv.args...)
 	cmd.Dir = inv.workdir
 
+	var diag string
+	var runErr error
 	if inv.stdoutToOut {
-		f, err := os.Create(outPath)
+		f, err := os.Create(outPath) // #nosec G304 -- outPath is our own CreateTemp file
 		if err != nil {
 			return nil, fmt.Sprintf("%s: %v", td.name, err)
 		}
 		cmd.Stdout = f
-		stderr, runErr := captureStderr(cmd)
-		f.Close()
-		if rep := parseIfPresent(outPath); rep != nil {
-			return rep, ""
-		}
-		return nil, fmt.Sprintf("%s: no SARIF produced: %v\n%s", td.name, runErr, stderr)
+		diag, runErr = captureStderr(cmd)
+		_ = f.Close()
+	} else {
+		var combined []byte
+		combined, runErr = cmd.CombinedOutput()
+		diag = string(combined)
 	}
 
-	combined, _ := cmd.CombinedOutput() // exit code intentionally ignored
 	if rep := parseIfPresent(outPath); rep != nil {
 		return rep, ""
 	}
-	return nil, fmt.Sprintf("%s: no SARIF produced\n%s", td.name, string(combined))
+	if runErr == nil {
+		return emptyReport(td.name), "" // ran clean, no findings, no file written
+	}
+	return nil, fmt.Sprintf("%s: no SARIF produced: %v\n%s", td.name, runErr, diag)
+}
+
+// emptyReport is a zero-finding report carrying the tool's identity, so a clean
+// tool still shows up as having run.
+func emptyReport(name string) *sarif.Report {
+	return &sarif.Report{Runs: []sarif.Run{{Tool: sarif.Tool{Driver: sarif.Driver{Name: name}}}}}
 }
 
 // captureStderr runs cmd (whose Stdout is already wired) capturing stderr.
@@ -119,7 +134,8 @@ func captureStderr(cmd *exec.Cmd) (string, error) {
 // parseIfPresent reads outPath and parses SARIF, returning nil when the file is
 // absent, empty, or unparseable (treated as "no findings" by the caller).
 func parseIfPresent(outPath string) *sarif.Report {
-	data, err := os.ReadFile(outPath)
+	data, err := os.ReadFile(outPath) // #nosec G304 -- outPath is our own CreateTemp file
+
 	if err != nil || len(data) == 0 {
 		return nil
 	}

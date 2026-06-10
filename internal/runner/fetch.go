@@ -13,6 +13,11 @@ import (
 	"path/filepath"
 )
 
+// maxArtifactBytes bounds a single extracted file, guarding against a
+// decompression bomb. Headroom over the largest real scanner binary (trivy,
+// ~150MB) while still capping a malicious archive.
+const maxArtifactBytes = 1 << 30 // 1 GiB
+
 // cacheRoot is where fetched scanner binaries and the govulncheck install land,
 // reused across runs (on a persistent runner this means one download per pin).
 func cacheRoot() string {
@@ -28,7 +33,7 @@ func cacheRoot() string {
 
 // download streams url to dest, creating parent dirs. Fails on non-200.
 func download(ctx context.Context, url, dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
 		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -43,7 +48,7 @@ func download(ctx context.Context, url, dest string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
 	}
-	f, err := os.Create(dest)
+	f, err := os.Create(dest) // #nosec G304 -- dest is under our own cache root, not user-controlled
 	if err != nil {
 		return err
 	}
@@ -60,7 +65,7 @@ func downloadBinary(ctx context.Context, url, destBin string) error {
 	if err := download(ctx, url, destBin); err != nil {
 		return err
 	}
-	return os.Chmod(destBin, 0o755)
+	return os.Chmod(destBin, 0o755) // #nosec G302 -- a scanner binary must be executable
 }
 
 // downloadTarGzBinary fetches a .tar.gz, extracts the single entry named
@@ -71,13 +76,13 @@ func downloadTarGzBinary(ctx context.Context, url, binInArchive, destBin string)
 		return err
 	}
 	tmpPath := tmp.Name()
-	tmp.Close()
+	_ = tmp.Close() // only the path is needed; download re-creates the file
 	defer os.Remove(tmpPath)
 
 	if err := download(ctx, url, tmpPath); err != nil {
 		return err
 	}
-	f, err := os.Open(tmpPath)
+	f, err := os.Open(tmpPath) // #nosec G304 -- tmpPath is our own CreateTemp file
 	if err != nil {
 		return err
 	}
@@ -99,19 +104,27 @@ func downloadTarGzBinary(ctx context.Context, url, binInArchive, destBin string)
 		if filepath.Base(hdr.Name) != binInArchive {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(destBin), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(destBin), 0o750); err != nil {
 			return err
 		}
-		out, err := os.Create(destBin)
+		out, err := os.Create(destBin) // #nosec G304 -- destBin is under our own cache root
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(out, tr); err != nil { //nolint:gosec // size bounded by release asset
-			out.Close()
+		// Bound the copy so a crafted archive cannot exhaust disk.
+		n, err := io.Copy(out, io.LimitReader(tr, maxArtifactBytes+1))
+		if err != nil {
+			_ = out.Close()
 			return err
 		}
-		out.Close()
-		return os.Chmod(destBin, 0o755)
+		if n > maxArtifactBytes {
+			_ = out.Close()
+			return fmt.Errorf("%s: %q exceeds %d bytes", url, binInArchive, maxArtifactBytes)
+		}
+		if err := out.Close(); err != nil {
+			return err
+		}
+		return os.Chmod(destBin, 0o755) // #nosec G302 -- a scanner binary must be executable
 	}
 }
 
@@ -127,10 +140,11 @@ func goInstall(ctx context.Context, module, cmdSubpath, version string) (string,
 	if fi, err := os.Stat(dest); err == nil && !fi.IsDir() {
 		return dest, nil
 	}
-	if err := os.MkdirAll(gobin, 0o755); err != nil {
+	if err := os.MkdirAll(gobin, 0o750); err != nil {
 		return "", err
 	}
 	pkg := fmt.Sprintf("%s/%s@v%s", module, cmdSubpath, version)
+	// #nosec G204 -- pkg is built from the pinned tools.lock (module + version), not user input
 	cmd := exec.CommandContext(ctx, "go", "install", pkg)
 	cmd.Env = append(os.Environ(), "GOBIN="+gobin)
 	if out, err := cmd.CombinedOutput(); err != nil {

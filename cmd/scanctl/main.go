@@ -100,6 +100,7 @@ func runCmd(args []string) int {
 	fmt.Print(summary)
 	fmt.Printf("\nran: %v\n", out.Ran)
 	if *summaryPath != "" {
+		// #nosec G306 -- the summary is non-sensitive report output; 0644 is intentional
 		if err := os.WriteFile(*summaryPath, []byte(summary), 0o644); err != nil {
 			fmt.Fprintln(os.Stderr, "write summary:", err)
 		}
