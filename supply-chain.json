@@ -35,11 +35,17 @@
       "minimumReleaseAge": null
     },
     {
-      "description": "Low-risk GitHub Actions bumps: group + automerge after the cooldown.",
+      "description": "Low-risk GitHub Actions version bumps: group + automerge after the cooldown.",
       "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchUpdateTypes": ["minor", "patch"],
       "groupName": "github-actions",
       "automerge": true
+    },
+    {
+      "description": "Do not chase github-actions digest (same-tag SHA) updates. A SHA has no release timestamp, so minimumReleaseAge cannot age it (timestamp-required marks it pending forever), and auto-adopting a moved tag re-introduces the mutable-tag supply-chain risk that SHA-pinning exists to prevent (cf. tj-actions/changed-files, CVE-2025-30066). New action code is adopted only via aged version bumps, which DO carry a release timestamp and pass through the 7-day cooldown.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest"],
+      "enabled": false
     },
     {
       "description": "Container image / compose bumps: group, review manually.",
