@@ -52,7 +52,11 @@ run flags:
   -lock string     path to tools.lock (default: embedded copy)
   -out string      merged SARIF output path (default "scanctl.sarif")
   -summary string  markdown summary output path (default: stdout only)
+  -sbom string     write a CycloneDX SBOM to this path (syft)
   -no-gate         scan and report but always exit 0
+
+upload (optional, via scanctl.yml + env): findings -> DefectDojo
+(DEFECTDOJO_TOKEN), SBOM -> Dependency-Track (DEPENDENCYTRACK_APIKEY).
 `)
 }
 
@@ -62,6 +66,7 @@ func runCmd(args []string) int {
 	lockPath := fs.String("lock", "", "")
 	outPath := fs.String("out", "scanctl.sarif", "")
 	summaryPath := fs.String("summary", "", "")
+	sbomOut := fs.String("sbom", "", "")
 	noGate := fs.Bool("no-gate", false, "")
 	_ = fs.Parse(args)
 
@@ -97,7 +102,9 @@ func runCmd(args []string) int {
 		return 2
 	}
 
-	uploadResults(context.Background(), cfg, *outPath)
+	ctx := context.Background()
+	uploadResults(ctx, cfg, *outPath)
+	sbomStep(ctx, cfg, lock, root, *sbomOut)
 
 	summary := report.Summary(out.Report)
 	fmt.Print(summary)
@@ -135,6 +142,40 @@ func uploadResults(ctx context.Context, cfg config.Config, sarifPath string) {
 		}
 	} else if dd.URL != "" {
 		fmt.Fprintln(os.Stderr, "warning: DefectDojo URL set but DEFECTDOJO_TOKEN missing -- skipping upload")
+	}
+}
+
+// sbomStep generates a CycloneDX SBOM and uploads it to Dependency-Track when
+// configured. It runs if --sbom is set OR a DT target is configured. As with
+// findings upload, failures are warnings -- never fatal.
+func sbomStep(ctx context.Context, cfg config.Config, lock runner.Lock, root, sbomOut string) {
+	dt := cfg.Upload.DependencyTrack
+	client, dtActive := upload.DependencyTrackFromEnv(dt.URL, dt.ProjectName, dt.ProjectVersion)
+	if sbomOut == "" && !dtActive {
+		if dt.URL != "" {
+			fmt.Fprintln(os.Stderr, "warning: Dependency-Track URL set but DEPENDENCYTRACK_APIKEY missing -- skipping SBOM upload")
+		}
+		return
+	}
+
+	path := sbomOut
+	if path == "" {
+		path = "scanctl.sbom.cdx.json"
+		defer os.Remove(path)
+	}
+	if err := runner.GenerateSBOM(ctx, root, lock, path); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: sbom:", err)
+		return
+	}
+	if sbomOut != "" {
+		fmt.Println("wrote SBOM to", sbomOut)
+	}
+	if dtActive {
+		if err := client.UploadBOM(ctx, path); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: dependency-track upload:", err)
+		} else {
+			fmt.Println("uploaded SBOM to Dependency-Track")
+		}
 	}
 }
 
