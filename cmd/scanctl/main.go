@@ -15,6 +15,7 @@ import (
 	"github.com/catenahq/scanctl/internal/gate"
 	"github.com/catenahq/scanctl/internal/report"
 	"github.com/catenahq/scanctl/internal/runner"
+	"github.com/catenahq/scanctl/internal/upload"
 )
 
 // version is set via -ldflags at release; "dev" for local builds.
@@ -96,6 +97,8 @@ func runCmd(args []string) int {
 		return 2
 	}
 
+	uploadResults(context.Background(), cfg, *outPath)
+
 	summary := report.Summary(out.Report)
 	fmt.Print(summary)
 	fmt.Printf("\nran: %v\n", out.Ran)
@@ -117,6 +120,22 @@ func runCmd(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// uploadResults pushes the merged SARIF to DefectDojo when configured. A
+// missing/unconfigured target is silently skipped; an upload failure is a
+// warning, never fatal -- the scan + gate already happened.
+func uploadResults(ctx context.Context, cfg config.Config, sarifPath string) {
+	dd := cfg.Upload.DefectDojo
+	if client, ok := upload.DefectDojoFromEnv(dd.URL, dd.ProductName, dd.EngagementName); ok {
+		if err := client.ImportSARIF(ctx, sarifPath); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: defectdojo upload:", err)
+		} else {
+			fmt.Println("uploaded findings to DefectDojo")
+		}
+	} else if dd.URL != "" {
+		fmt.Fprintln(os.Stderr, "warning: DefectDojo URL set but DEFECTDOJO_TOKEN missing -- skipping upload")
+	}
 }
 
 func loadLock(path string) (runner.Lock, error) {

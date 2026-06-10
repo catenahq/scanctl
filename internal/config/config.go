@@ -56,8 +56,8 @@ type ToolConfig struct {
 
 // Config is the whole scanctl.yml.
 type Config struct {
-	// Profile is "sellable" for v1. "full" (Semgrep registry + deps.dev) is a
-	// later phase; declared here so the field is stable.
+	// Profile is "sellable" (default) or "full". It gates profile-restricted
+	// tools (e.g. Semgrep registry rules / deps.dev are full-only). See Profile*.
 	Profile string `yaml:"profile"`
 	// Gate.Floor: a blocking tool fails the run on a finding at/above this.
 	Gate GateConfig `yaml:"gate"`
@@ -65,11 +65,42 @@ type Config struct {
 	Tools map[string]ToolConfig `yaml:"tools"`
 	// Ignore globs, applied during detection and passed to tools that accept them.
 	Ignore []string `yaml:"ignore"`
+	// Upload targets the aggregation plane (P2/P3); empty = serverless (v1).
+	Upload UploadConfig `yaml:"upload"`
 }
+
+// Profile values.
+const (
+	ProfileSellable = "sellable"
+	ProfileFull     = "full"
+)
 
 // GateConfig holds the global severity floor.
 type GateConfig struct {
 	Floor Severity `yaml:"floor"`
+}
+
+// UploadConfig points scanctl at the aggregation plane. A target is active only
+// when its URL is set AND its credential env var is present; otherwise it is
+// skipped with a warning (robustness: a misconfigured dashboard never fails the
+// scan itself).
+type UploadConfig struct {
+	DefectDojo      DefectDojoConfig      `yaml:"defectdojo"`
+	DependencyTrack DependencyTrackConfig `yaml:"dependency_track"`
+}
+
+// DefectDojoConfig: findings dashboard. Token from env DEFECTDOJO_TOKEN.
+type DefectDojoConfig struct {
+	URL            string `yaml:"url"`
+	ProductName    string `yaml:"product_name"`
+	EngagementName string `yaml:"engagement_name"`
+}
+
+// DependencyTrackConfig: SBOM portfolio. API key from env DEPENDENCYTRACK_APIKEY.
+type DependencyTrackConfig struct {
+	URL            string `yaml:"url"`
+	ProjectName    string `yaml:"project_name"`
+	ProjectVersion string `yaml:"project_version"`
 }
 
 // Default returns the zero-config baseline: sellable profile, high floor, the
@@ -77,7 +108,7 @@ type GateConfig struct {
 // today (osv/trivy/govulncheck block; gitleaks/gosec report until baselined).
 func Default() Config {
 	return Config{
-		Profile: "sellable",
+		Profile: ProfileSellable,
 		Gate:    GateConfig{Floor: SevHigh},
 		Tools: map[string]ToolConfig{
 			"osv-scanner":  {Enabled: true, Mode: ModeBlock},
@@ -119,5 +150,6 @@ func Load(path string) (Config, error) {
 	if fromFile.Ignore != nil {
 		cfg.Ignore = fromFile.Ignore
 	}
+	cfg.Upload = fromFile.Upload
 	return cfg, nil
 }
