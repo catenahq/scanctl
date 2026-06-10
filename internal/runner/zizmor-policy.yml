@@ -1,0 +1,13 @@
+# scanctl-bundled zizmor policy.
+#
+# unpinned-uses: first-party catenahq/* references may be ref-pinned. The
+# scanctl reusable security workflow is tracked at @main on purpose -- it is
+# guarded by branch protection on catenahq/scanctl, not a version pin, so it
+# auto-updates without a digest bump across every caller. Third-party actions
+# must still be hash-pinned. Most-specific pattern wins; "*" is last.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        catenahq/*: ref-pin
+        "*": hash-pin

@@ -22,6 +22,20 @@ func TestDefaultEnablesCoreTools(t *testing.T) {
 	}
 }
 
+func TestZizmorBlocksByDefault(t *testing.T) {
+	// Workflow-supply-chain findings gate; the first-party @main false positive
+	// is handled by the bundled zizmor policy, not by keeping zizmor advisory.
+	if Default().Tools["zizmor"].Mode != ModeBlock {
+		t.Error("zizmor should default to block mode")
+	}
+	// semgrep + guarddog stay report until baselined.
+	for _, n := range []string{"semgrep", "guarddog", "gosec", "gitleaks"} {
+		if Default().Tools[n].Mode != ModeReport {
+			t.Errorf("%s should default to report mode", n)
+		}
+	}
+}
+
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yml"))
 	if err != nil {

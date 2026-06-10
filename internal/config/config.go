@@ -109,10 +109,13 @@ type DependencyTrackConfig struct {
 // Default returns the zero-config baseline: sellable profile, high floor, the
 // v1 core scanners enabled with the same block/report split catena-ce uses
 // today (osv/trivy/govulncheck block; gitleaks/gosec report until baselined).
-// The added scanners (semgrep, zizmor, guarddog) start in report mode like
-// gosec/gitleaks -- promote to block per repo after the baseline is
-// acknowledged. semgrep is fullOnly, so it only actually runs under the "full"
-// profile (catena's internal scanctl.yml sets that).
+// zizmor blocks: a workflow-supply-chain finding is a security issue, not
+// advisory. Its only baseline false-positive -- unpinned first-party @main
+// reusable-workflow refs -- is exempted by the bundled zizmor policy
+// (catenahq/* may ref-pin; third-party must hash-pin; see runner/zizmor.go).
+// semgrep and guarddog stay report-mode like gosec/gitleaks until baselined.
+// semgrep is fullOnly, so it only actually runs under the "full" profile
+// (catena's internal scanctl.yml sets that).
 func Default() Config {
 	return Config{
 		Profile: ProfileSellable,
@@ -124,7 +127,7 @@ func Default() Config {
 			"gosec":         {Enabled: true, Mode: ModeReport},
 			"gitleaks":      {Enabled: true, Mode: ModeReport},
 			"semgrep":       {Enabled: true, Mode: ModeReport},
-			"zizmor":        {Enabled: true, Mode: ModeReport},
+			"zizmor":        {Enabled: true, Mode: ModeBlock},
 			"guarddog":      {Enabled: true, Mode: ModeReport},
 			"trivy-license": {Enabled: true, Mode: ModeReport},
 		},

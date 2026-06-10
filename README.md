@@ -32,6 +32,13 @@ relocate); govulncheck is `go install`ed; the Python tools (semgrep, guarddog)
 are installed with `uv tool install`. **Runner prerequisites:** `go` and `uv`
 on `PATH` (the reusable workflow sets both up).
 
+zizmor runs in **block** mode with a bundled policy ([`internal/runner/zizmor-policy.yml`](internal/runner/zizmor-policy.yml),
+passed via `--config`): first-party `catenahq/*` actions may be ref-pinned, every
+third-party `uses:` must be hash-pinned. This lets the reusable security workflow
+stay at `@main` (auto-updating, guarded by branch protection on the scanctl repo
+rather than a per-caller digest pin) while still gating on unpinned third-party
+actions and every other high-severity workflow finding.
+
 GuardDog's SARIF comes from its manifest-based `verify` subcommand, so it scans
 only a root `requirements.txt` (PyPI), `package-lock.json` (npm), or `go.mod`
 (Go); nested manifests and pyproject-only projects are out of scope for now.
