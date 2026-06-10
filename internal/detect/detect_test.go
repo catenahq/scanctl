@@ -58,7 +58,7 @@ func TestGeneratedLockfilesStillTriggerSCA(t *testing.T) {
 	// enry flags package-lock.json / pnpm-lock.yaml / Pipfile.lock as generated;
 	// they must still set HasLockfile (they are the SCA trigger), or osv-scanner
 	// silently never runs on npm/pnpm/pipenv projects.
-	for _, lf := range []string{"package-lock.json", "pnpm-lock.yaml", "Pipfile.lock"} {
+	for _, lf := range []string{"package-lock.json", "pnpm-lock.yaml", "Pipfile.lock", "uv.lock"} {
 		fsys := fstest.MapFS{
 			"package.json": {Data: []byte("{}")},
 			lf:             {Data: []byte("{}")},

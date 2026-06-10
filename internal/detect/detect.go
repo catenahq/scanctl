@@ -62,6 +62,7 @@ var lockfiles = map[string]bool{
 	"yarn.lock":         true,
 	"pnpm-lock.yaml":    true,
 	"poetry.lock":       true,
+	"uv.lock":           true,
 	"Pipfile.lock":      true,
 	"requirements.txt":  true,
 	"Gemfile.lock":      true,
