@@ -58,12 +58,12 @@ with no file, sensible defaults apply.
 
 ### In CI
 
-Call the reusable workflow ([`ci/github-reusable.yml`](ci/github-reusable.yml)):
+Call the reusable workflow ([`.github/workflows/github-reusable.yml`](.github/workflows/github-reusable.yml)):
 
 ```yaml
 jobs:
   security:
-    uses: catenahq/scanctl/.github/workflows/github-reusable.yml@v0
+    uses: catenahq/scanctl/.github/workflows/github-reusable.yml@main
     permissions:
       contents: read
       security-events: write
