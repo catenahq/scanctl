@@ -139,9 +139,10 @@ tool that emits SARIF needs only a registry entry; a JSON-only tool supplies a
 
 ## Licensing & resale
 
-scanctl's own code carries no OSS license yet (deliberate — it is intended to be
-sellable). The bundled scanners keep their own licenses and are invoked as
-separate processes (mere aggregation), which is what keeps that option open.
-Resale-clean by construction: no Semgrep registry rules, no deps.dev/Google API.
-Selling the install/expertise (client runs it on their own infra) is the cleanest
-model; a redistributed product or multi-tenant SaaS has stricter obligations.
+scanctl's own code is fair-code under the Sustainable Use model (see
+[LICENSE.md](LICENSE.md)): free to run for your own purposes or on a client's
+infra as part of a service you perform, but not to resell or offer as a managed
+service. The bundled scanners keep their own licenses and are invoked as
+separate processes (mere aggregation), which keeps that boundary clean.
+Resale-clean by construction: the `sellable` profile uses no Semgrep registry
+rules and no deps.dev/Google API (the `full` profile, used internally, does).
