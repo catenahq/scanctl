@@ -77,6 +77,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 	// per-image) run after the loop and merge into the same report. Like
 	// runTool, a failure is a warning, never fatal (robustness over strictness).
 	guarddogStep(ctx, cfg, lock, root, out)
+	licenseStep(ctx, cfg, lock, root, out)
 	imageStep(ctx, cfg, lock, out)
 
 	return out, nil

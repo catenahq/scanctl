@@ -8,7 +8,7 @@ import (
 
 func TestDefaultEnablesCoreTools(t *testing.T) {
 	d := Default()
-	for _, name := range []string{"osv-scanner", "trivy", "gitleaks", "gosec", "govulncheck", "semgrep", "zizmor", "guarddog"} {
+	for _, name := range []string{"osv-scanner", "trivy", "gitleaks", "gosec", "govulncheck", "semgrep", "zizmor", "guarddog", "trivy-license"} {
 		tc, ok := d.Tools[name]
 		if !ok || !tc.Enabled {
 			t.Errorf("default should enable %s", name)

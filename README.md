@@ -23,6 +23,7 @@ resale-restricted and runs only under the `full` profile (see Profiles).
 | [zizmor](https://github.com/zizmorcore/zizmor) | MIT/Apache-2.0 | GitHub Actions workflow audit | `.github/workflows/*.y{a,}ml` present |
 | [guarddog](https://github.com/DataDog/guarddog) | Apache-2.0 | malicious PyPI/npm packages (heuristics) | root `requirements.txt` / `package-lock.json` |
 | [semgrep](https://github.com/semgrep/semgrep) | LGPL-2.1 (registry packs restricted) | multi-language SAST (auto-selected packs) | source ecosystem present **and** `profile: full` |
+| trivy (license) | Apache-2.0 | dependency license scan (copyleft/unknown), advisory | always (separate `trivy-license` driver, report-mode) |
 
 Scanner versions are pinned in [`tools.lock`](tools.lock) (embedded in the
 binary) and bumped by Renovate. Release-binary tools (trivy, osv-scanner,
@@ -34,6 +35,12 @@ on `PATH` (the reusable workflow sets both up).
 GuardDog's SARIF comes from its manifest-based `verify` subcommand, so it scans
 only a root `requirements.txt` (PyPI) or `package-lock.json` (npm); nested
 manifests and pyproject-only projects are out of scope for now.
+
+The license scan is a second trivy pass under its own `trivy-license` driver
+(report-mode by design: copyleft/unknown licenses are advisory and must not
+inherit the fs scan's blocking gate). The reusable workflow also emits a syft
+CycloneDX SBOM (`sbom.cdx.json`) and uploads it as an artifact -- together these
+fold in the old standalone `licenses-sbom` workflow.
 
 ## Usage
 

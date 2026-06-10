@@ -34,6 +34,17 @@ func TestReportModeNeverGates(t *testing.T) {
 	}
 }
 
+func TestLicenseFindingsNeverGate(t *testing.T) {
+	cfg := baseCfg()
+	// trivy-license is a distinct driver in report mode: copyleft/unknown
+	// licenses are advisory and must not block, unlike the trivy fs scan.
+	rep := &sarif.Report{Runs: []sarif.Run{report("trivy-license", sarif.LevelError, 3)}}
+	v := Evaluate(rep, cfg)
+	if v.Failed() {
+		t.Errorf("license findings must not gate; gating=%d", v.Gating)
+	}
+}
+
 func TestBlockModeGatesAtOrAboveFloor(t *testing.T) {
 	cfg := baseCfg() // floor = high; error maps to high
 	rep := &sarif.Report{Runs: []sarif.Run{

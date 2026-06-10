@@ -66,10 +66,18 @@ jobs:
           profile_flag=""
           if [ -n "${{ inputs.profile }}" ]; then profile_flag="--profile ${{ inputs.profile }}"; fi
           "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag \
-            --out scanctl.sarif --summary "$GITHUB_STEP_SUMMARY" "${{ inputs.path }}"
+            --out scanctl.sarif --sbom sbom.cdx.json \
+            --summary "$GITHUB_STEP_SUMMARY" "${{ inputs.path }}"
       - name: Upload SARIF to code scanning
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: scanctl.sarif
         continue-on-error: true
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+          if-no-files-found: ignore
