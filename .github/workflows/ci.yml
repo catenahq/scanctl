@@ -18,7 +18,7 @@ jobs:
     name: build + vet + test
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Put Go on PATH
         run: echo "$HOME/.local/go/bin" >> "$GITHUB_PATH"
       - run: go version
@@ -33,7 +33,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
       - name: Put Go on PATH
@@ -44,13 +44,13 @@ jobs:
         run: ./scanctl run --no-gate --out scanctl.sarif --summary "$GITHUB_STEP_SUMMARY" .
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
         with:
           sarif_file: scanctl.sarif
         continue-on-error: true
       - name: Upload SARIF artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: scanctl-sarif
           path: scanctl.sarif
