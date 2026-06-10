@@ -1,34 +1,21 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended",
-    ":dependencyDashboard",
-    ":semanticCommits",
-    ":timezone(America/Toronto)",
-    "helpers:pinGitHubActionDigests"
-  ],
-  "schedule": ["before 5am"],
-  "labels": ["dependencies"],
-  "minimumReleaseAge": "7 days",
-  "vulnerabilityAlerts": {
-    "labels": ["security", "dependencies"],
-    "automerge": true,
-    "minimumReleaseAge": null
-  },
+  "extends": ["github>catenahq/scanctl:supply-chain"],
   "packageRules": [
     {
+      "description": "Go module minor/patch: group + automerge after the shared cooldown.",
       "matchManagers": ["gomod"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "go modules (minor+patch)",
       "automerge": true
     },
     {
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["minor", "patch", "digest"],
-      "groupName": "github-actions",
-      "automerge": true
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
     },
     {
+      "description": "Pinned scanners in tools.lock: group, automerge after cooldown + a green self-scan.",
       "matchManagers": ["custom.regex"],
       "matchFileNames": ["tools.lock"],
       "groupName": "pinned scanners",

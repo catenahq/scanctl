@@ -80,6 +80,25 @@ warning, never failing the scan.
 - `full`: also runs resale-restricted tools (`fullOnly`), for personal use or a
   client-operates-their-own-box engagement.
 
+## Dependency policy (Renovate preset)
+
+scanctl detects; it never updates. Remediation is Renovate's lane, and the
+suite owns that policy once: [supply-chain.json](supply-chain.json) is a shared
+Renovate preset. Any repo adopts it with a one-line config:
+
+```json
+{ "extends": ["github>catenahq/scanctl:supply-chain"] }
+```
+
+The preset enforces a **7-day adoption cooldown** (`minimumReleaseAge`) and --
+critically -- holds PR *creation* until the release has aged
+(`internalChecksFilter: strict` + `prCreation: not-pending`). Without that, the
+PR opens on release day (scanners run on the day-0 version) and auto-merges 7
+days later with no fresh scan; with it, the PR opens only after the cooldown, so
+scanctl scans the exact version that will merge. Known-CVE fixes are exempt
+(`vulnerabilityAlerts` automerges with no cooldown). The same cooldown governs
+scanctl's own `tools.lock` scanner pins.
+
 ## Extending: the adapter seam
 
 The router (go-enry: ecosystem detection + vendored/generated filtering +

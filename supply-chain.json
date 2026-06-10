@@ -1,0 +1,46 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Catena shared supply-chain / dependency policy. Extend it from any repo with: extends: github>catenahq/scanctl:supply-chain",
+    "Adoption cooldown: minimumReleaseAge holds a release for 7 days. internalChecksFilter=strict plus prCreation=not-pending mean the PR is NOT opened until the release has aged past the cooldown, so CI (scanctl) scans the exact version that will merge. Without this, Renovate would open the PR on release day (scanners run on the day-0 version) and then auto-merge 7 days later with no fresh scan, defeating the cooldown.",
+    "Security fixes are exempt: vulnerabilityAlerts sets minimumReleaseAge=null and automerges, so a known-CVE patch is not held for 7 days."
+  ],
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":timezone(America/Toronto)",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "schedule": ["before 5am"],
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "prCreation": "not-pending",
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 4am on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["security", "dependencies"],
+    "minimumReleaseAge": null,
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "description": "Low-risk GitHub Actions bumps: group + automerge after the cooldown.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "github-actions",
+      "automerge": true
+    },
+    {
+      "description": "Container image / compose bumps: group, review manually.",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "groupName": "docker",
+      "automerge": false
+    }
+  ]
+}
