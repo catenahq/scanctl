@@ -54,6 +54,25 @@ func TestDetectWorkflows(t *testing.T) {
 	}
 }
 
+func TestGeneratedLockfilesStillTriggerSCA(t *testing.T) {
+	// enry flags package-lock.json / pnpm-lock.yaml / Pipfile.lock as generated;
+	// they must still set HasLockfile (they are the SCA trigger), or osv-scanner
+	// silently never runs on npm/pnpm/pipenv projects.
+	for _, lf := range []string{"package-lock.json", "pnpm-lock.yaml", "Pipfile.lock"} {
+		fsys := fstest.MapFS{
+			"package.json": {Data: []byte("{}")},
+			lf:             {Data: []byte("{}")},
+		}
+		res, err := DetectFS(fsys, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.HasLockfile {
+			t.Errorf("%s should set HasLockfile despite being enry-generated", lf)
+		}
+	}
+}
+
 func TestDetectEmptyRepo(t *testing.T) {
 	res, err := DetectFS(fstest.MapFS{"README.md": {Data: []byte("hi")}}, nil)
 	if err != nil {

@@ -64,7 +64,7 @@ var registry = []toolDef{
 			// (P3), which reasons over the full SBOM rather than per-file matches.
 			return invocation{args: []string{
 				"fs", "--quiet", "--format", "sarif", "--output", out,
-				"--scanners", "vuln,misconfig,secret", root,
+				"--scanners", "vuln,misconfig,secret", "--ignore-unfixed", root,
 			}}
 		},
 	},

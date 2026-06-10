@@ -46,7 +46,8 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, out *Outcome) 
 		outPath := outFile.Name()
 		_ = outFile.Close()
 		// #nosec G204 -- bin is the pinned trivy; ref comes from the operator's scanctl.yml
-		cmd := exec.CommandContext(ctx, bin, "image", "--quiet", "--format", "sarif", "--output", outPath, ref)
+		cmd := exec.CommandContext(ctx, bin, "image", "--quiet", "--format", "sarif",
+			"--ignore-unfixed", "--output", outPath, ref)
 		if mergeSARIFRun("trivy", cmd, outPath, false, out) {
 			ran = true
 		}

@@ -42,9 +42,12 @@ func licenseStep(ctx context.Context, cfg config.Config, lock Lock, root string,
 	_ = outFile.Close()
 	defer os.Remove(outPath)
 
+	// --severity HIGH,CRITICAL keeps the scan to restricted/forbidden licenses
+	// (copyleft, unknown) and drops the hundreds of permissive-license notices
+	// that would otherwise bury the report (one per transitive dependency).
 	// #nosec G204 -- bin is the pinned trivy; root is the scan target path
 	cmd := exec.CommandContext(ctx, bin, "fs", "--quiet", "--format", "sarif",
-		"--output", outPath, "--scanners", "license", root)
+		"--output", outPath, "--scanners", "license", "--severity", "HIGH,CRITICAL", root)
 	if mergeSARIFRun("trivy-license", cmd, outPath, false, out) {
 		out.Ran = append(out.Ran, "trivy-license")
 	}

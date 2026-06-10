@@ -13,6 +13,10 @@ import (
 	"path/filepath"
 )
 
+// pyToolPython is the interpreter uv installs Python-based tools under. Pinned
+// to a stable version with wheels for all tool deps, not the newest release.
+const pyToolPython = "3.13"
+
 // maxArtifactBytes bounds a single extracted file, guarding against a
 // decompression bomb. Headroom over the largest real scanner binary (trivy,
 // ~150MB) while still capping a malicious archive.
@@ -170,8 +174,12 @@ func pyInstall(ctx context.Context, pkg, version, binName string) (string, error
 		return "", err
 	}
 	spec := pkg + "==" + version
+	// Pin the interpreter: the newest CPython often lacks wheels for a tool's
+	// native deps (e.g. guarddog -> pygit2 has no cp314 wheel and its source
+	// build fails), which would break the install on a runner defaulting to the
+	// latest Python. uv fetches this version on demand.
 	// #nosec G204 -- spec is built from the pinned tools.lock (pkg + version), not user input
-	cmd := exec.CommandContext(ctx, "uv", "tool", "install", "--force", spec)
+	cmd := exec.CommandContext(ctx, "uv", "tool", "install", "--force", "--python", pyToolPython, spec)
 	cmd.Env = append(os.Environ(), "UV_TOOL_DIR="+toolDir, "UV_TOOL_BIN_DIR="+binDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("uv tool install %s: %w\n%s", spec, err, out)
