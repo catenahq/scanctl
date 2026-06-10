@@ -40,9 +40,12 @@ var registry = []toolDef{
 				v, v, trivyArch())
 		}, "trivy"),
 		invoke: func(bin, root, out string) invocation {
+			// License scanning is intentionally omitted here: permissive-license
+			// notices are noise, and license *policy* is owned by Dependency-Track
+			// (P3), which reasons over the full SBOM rather than per-file matches.
 			return invocation{args: []string{
 				"fs", "--quiet", "--format", "sarif", "--output", out,
-				"--scanners", "vuln,misconfig,secret,license", root,
+				"--scanners", "vuln,misconfig,secret", root,
 			}}
 		},
 	},

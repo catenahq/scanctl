@@ -14,7 +14,7 @@ All resale-clean and SARIF-native; the runner invokes each as a subprocess
 
 | Tool | License | Covers | Runs when |
 | --- | --- | --- | --- |
-| [trivy](https://github.com/aquasecurity/trivy) | Apache-2.0 | dep CVEs + secrets + IaC misconfig + license (one binary) | always |
+| [trivy](https://github.com/aquasecurity/trivy) | Apache-2.0 | dep CVEs + secrets + IaC misconfig (one binary) | always |
 | [osv-scanner](https://github.com/google/osv-scanner) | Apache-2.0 | dependency CVEs, all ecosystems | a lockfile exists |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | MIT | secrets across git history | always |
 | [gosec](https://github.com/securego/gosec) | Apache-2.0 | Go SAST (type-aware) | `go.mod` present |

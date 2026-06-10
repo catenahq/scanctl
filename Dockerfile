@@ -23,5 +23,6 @@ COPY --from=build /out/scanctl /usr/local/bin/scanctl
 USER scanctl
 ENV HOME=/home/scanctl
 WORKDIR /repo
+HEALTHCHECK CMD ["scanctl", "version"]
 ENTRYPOINT ["scanctl"]
 CMD ["run", "."]
