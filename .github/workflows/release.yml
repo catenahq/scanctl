@@ -16,7 +16,7 @@ jobs:
   binaries:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Put Go on PATH
         run: echo "$HOME/.local/go/bin" >> "$GITHUB_PATH"
       - name: Build
@@ -30,7 +30,7 @@ jobs:
               -o "dist/scanctl_linux_${arch}" ./cmd/scanctl
           done
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/scanctl_linux_*
           generate_release_notes: true
@@ -38,13 +38,13 @@ jobs:
   image:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v6
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: true
