@@ -1,0 +1,7 @@
+# built binary
+/scanctl
+/dist/
+
+# scan outputs
+*.sarif
+scanctl.summary.md

@@ -1,0 +1,38 @@
+# scanctl configuration. Every field is optional -- with no file at all,
+# `scanctl run .` uses these same defaults. Copy to scanctl.yml to customize.
+
+# Tool profile. v1 ships only "sellable" (resale-clean: no Semgrep registry
+# rules, no deps.dev/Google API). "full" is a later phase.
+profile: sellable
+
+# Gate floor: a tool in "block" mode fails the run on a finding at or above this
+# severity. One of: none, low, medium, high, critical.
+gate:
+  floor: high
+
+# Per-tool switches. mode "block" can fail the run; "report" only surfaces
+# findings. Defaults mirror catena-ce's split (deps/CVE block; SAST/secrets
+# report until the baseline is acknowledged, then promote to block).
+tools:
+  osv-scanner:
+    enabled: true
+    mode: block
+  trivy:
+    enabled: true
+    mode: block
+  govulncheck:
+    enabled: true
+    mode: block
+  gosec:
+    enabled: true
+    mode: report
+  gitleaks:
+    enabled: true
+    mode: report
+
+# Directory names skipped during detection (matched anywhere in the tree).
+ignore:
+  - .git
+  - vendor
+  - node_modules
+  - testdata

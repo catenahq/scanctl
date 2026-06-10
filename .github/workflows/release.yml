@@ -1,0 +1,55 @@
+name: release
+
+# CD: on a vX.Y.Z tag, build the binary for linux amd64+arm64, attach them to a
+# GitHub Release, and publish a slim image to GHCR. Consumers pin the reusable
+# workflow / module to the tag; their own Renovate bumps the ref (the pull leg).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  binaries:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+      - name: Put Go on PATH
+        run: echo "$HOME/.local/go/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "-s -w -X main.version=${ver}" \
+              -o "dist/scanctl_linux_${arch}" ./cmd/scanctl
+          done
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/scanctl_linux_*
+          generate_release_notes: true
+
+  image:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          tags: |
+            ghcr.io/catenahq/scanctl:${{ github.ref_name }}
+            ghcr.io/catenahq/scanctl:latest

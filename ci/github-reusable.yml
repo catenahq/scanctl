@@ -1,0 +1,63 @@
+name: scanctl
+
+# Reusable workflow: drop one call into any repo to run the scanctl bundle.
+# scanctl is fetched with `go install` (tools.lock is embedded, so the scanner
+# pins travel with it); the scanners themselves are lazy-fetched at scan time.
+#
+# Caller example:
+#   jobs:
+#     security:
+#       uses: catenahq/scanctl/.github/workflows/github-reusable.yml@v0
+#       with:
+#         scanctl-version: v0.1.0
+#       permissions:
+#         contents: read
+#         security-events: write
+
+on:
+  workflow_call:
+    inputs:
+      scanctl-version:
+        description: scanctl module version (tag) to install
+        type: string
+        default: latest
+      path:
+        description: repo subpath to scan
+        type: string
+        default: "."
+      no-gate:
+        description: scan + report but never fail the build
+        type: boolean
+        default: false
+      runner:
+        description: runs-on label
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  scan:
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # full history so gitleaks scans past commits
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Install scanctl
+        run: go install github.com/catenahq/scanctl/cmd/scanctl@${{ inputs.scanctl-version }}
+      - name: Run scanctl
+        run: |
+          gate_flag=""
+          if [ "${{ inputs.no-gate }}" = "true" ]; then gate_flag="--no-gate"; fi
+          "$(go env GOPATH)/bin/scanctl" run $gate_flag \
+            --out scanctl.sarif --summary "$GITHUB_STEP_SUMMARY" "${{ inputs.path }}"
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: scanctl.sarif
+        continue-on-error: true

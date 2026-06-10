@@ -1,0 +1,57 @@
+name: CI
+
+# Build/vet/test the scanctl binary, then dogfood it: run scanctl on its own
+# source. The self-scan is report-only (--no-gate) until the baseline is
+# acknowledged; its SARIF is uploaded to code scanning. Go comes from
+# ~/.local/go on the self-hosted runner (matches catenahq/* convention).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: build + vet + test
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+      - name: Put Go on PATH
+        run: echo "$HOME/.local/go/bin" >> "$GITHUB_PATH"
+      - run: go version
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  self-scan:
+    name: scanctl scans scanctl (dogfood)
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Put Go on PATH
+        run: echo "$HOME/.local/go/bin" >> "$GITHUB_PATH"
+      - name: Build scanctl
+        run: go build -o scanctl ./cmd/scanctl
+      - name: Run scanctl on itself (report-only)
+        run: ./scanctl run --no-gate --out scanctl.sarif --summary "$GITHUB_STEP_SUMMARY" .
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: scanctl.sarif
+        continue-on-error: true
+      - name: Upload SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scanctl-sarif
+          path: scanctl.sarif
+          if-no-files-found: ignore
