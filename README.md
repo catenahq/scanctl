@@ -61,12 +61,39 @@ internal/gate     severity floor -> exit code
 tools.lock        pinned scanner versions (Renovate-managed, embedded)
 ```
 
-## Roadmap (designed, not built)
+## Aggregation plane (optional)
 
-- **P2** DefectDojo (single dashboard): upload SARIF/native with scan types.
-- **P3** Dependency-Track: push CycloneDX SBOM, license policy, monitoring.
-- **P4** go-enry router, more scanners (bandit, Checkov/KICS, GuardDog,
-  Scorecard + libyear + ecosyste.ms), and the `full` vs `sellable` profile split.
+Serverless by default. Configure either target in `scanctl.yml` (+ its env
+credential) to also push results; a missing credential is skipped with a
+warning, never failing the scan.
+
+- **DefectDojo** (findings) -- merged SARIF -> import-scan API. `DEFECTDOJO_TOKEN`.
+  See [deploy/defectdojo/](deploy/defectdojo/).
+- **Dependency-Track** (SBOM portfolio, license policy, continuous monitoring)
+  -- syft CycloneDX -> `/api/v1/bom`. `DEPENDENCYTRACK_APIKEY`. See
+  [deploy/dependency-track/](deploy/dependency-track/).
+
+## Profiles
+
+- `sellable` (default): resale-clean -- only permissively-licensed tools, no
+  Semgrep registry rules, no deps.dev/Google API.
+- `full`: also runs resale-restricted tools (`fullOnly`), for personal use or a
+  client-operates-their-own-box engagement.
+
+## Extending: the adapter seam
+
+The router (go-enry: ecosystem detection + vendored/generated filtering +
+language census) and the tool registry make new scanners a small addition. A
+tool that emits SARIF needs only a registry entry; a JSON-only tool supplies a
+`convert([]byte) (*sarif.Report, error)` adapter. Deferred scanners and why:
+
+| Tool | Axis | Why not in core yet |
+| --- | --- | --- |
+| Checkov / KICS | IaC policy | trivy already covers IaC misconfig; adds overlap + a slow 68MB binary |
+| bandit | Python SAST | pip-only runtime (no single-binary release) |
+| GuardDog | malicious packages | pip-only; JSON output -> needs a convert adapter |
+| OpenSSF Scorecard / libyear / ecosyste.ms | dependency health / obsolescence | binary+token or service deps; new axis, larger lift |
+| Opengrep + rules / Semgrep registry | SAST breadth | engine is a clean binary but needs a maintained ruleset; Semgrep registry is `fullOnly` |
 
 ## Licensing & resale
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/detect"
+	"github.com/catenahq/scanctl/internal/sarif"
 )
 
 // invocation describes how to run a tool: the argv, the working directory
@@ -32,6 +33,11 @@ type toolDef struct {
 	applies  func(detect.Result) bool
 	ensure   func(ctx context.Context, version string) (binPath string, err error)
 	invoke   func(binPath, root, outPath string) invocation
+	// convert is the adapter seam for tools that do NOT emit SARIF: it turns the
+	// tool's native output bytes into a SARIF report. nil means the tool already
+	// writes SARIF (the v1 core). This is how JSON-only scanners (GuardDog,
+	// Scorecard, libyear, ...) plug in without touching the runner.
+	convert func(raw []byte) (*sarif.Report, error)
 }
 
 // profileAllows reports whether td may run under the given profile.

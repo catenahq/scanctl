@@ -1,8 +1,9 @@
 # scanctl configuration. Every field is optional -- with no file at all,
 # `scanctl run .` uses these same defaults. Copy to scanctl.yml to customize.
 
-# Tool profile. v1 ships only "sellable" (resale-clean: no Semgrep registry
-# rules, no deps.dev/Google API). "full" is a later phase.
+# Tool profile. "sellable" (default) is resale-clean: no Semgrep registry rules,
+# no deps.dev/Google API. "full" additionally enables resale-restricted tools
+# for personal / client-operates-own-box use.
 profile: sellable
 
 # Gate floor: a tool in "block" mode fails the run on a finding at or above this
@@ -31,8 +32,25 @@ tools:
     mode: report
 
 # Directory names skipped during detection (matched anywhere in the tree).
+# Vendored + generated files are additionally skipped via go-enry, so this list
+# only needs project-specific extras.
 ignore:
   - .git
   - vendor
   - node_modules
   - testdata
+
+# Aggregation plane (optional). Leave URLs empty for serverless operation.
+# Credentials are env vars, never committed:
+#   DEFECTDOJO_TOKEN          -> findings dashboard
+#   DEPENDENCYTRACK_APIKEY    -> SBOM portfolio
+# A target with a URL but a missing credential is skipped with a warning.
+upload:
+  defectdojo:
+    url: ""              # e.g. https://defectdojo.internal
+    product_name: ""     # default: scanctl
+    engagement_name: ""  # default: scanctl
+  dependency_track:
+    url: ""              # e.g. https://deptrack.internal
+    project_name: ""     # default: scanctl
+    project_version: ""  # default: latest

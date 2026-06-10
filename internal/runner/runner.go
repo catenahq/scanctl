@@ -112,13 +112,31 @@ func runTool(ctx context.Context, td toolDef, bin, root string) (*sarif.Report, 
 		diag = string(combined)
 	}
 
-	if rep := parseIfPresent(outPath); rep != nil {
+	if rep := parseOutput(td, outPath); rep != nil {
 		return rep, ""
 	}
 	if runErr == nil {
 		return emptyReport(td.name), "" // ran clean, no findings, no file written
 	}
 	return nil, fmt.Sprintf("%s: no SARIF produced: %v\n%s", td.name, runErr, diag)
+}
+
+// parseOutput turns a tool's output file into SARIF: directly for SARIF-native
+// tools, or through the tool's convert adapter for JSON-only tools. Returns nil
+// when the file is absent/empty/unparseable (treated as "no findings").
+func parseOutput(td toolDef, outPath string) *sarif.Report {
+	if td.convert == nil {
+		return parseIfPresent(outPath)
+	}
+	data, err := os.ReadFile(outPath) // #nosec G304 -- outPath is our own CreateTemp file
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	rep, err := td.convert(data)
+	if err != nil {
+		return nil
+	}
+	return rep
 }
 
 // emptyReport is a zero-finding report carrying the tool's identity, so a clean

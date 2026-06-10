@@ -2,11 +2,47 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/detect"
+	"github.com/catenahq/scanctl/internal/sarif"
 )
+
+func TestParseOutputUsesConverterSeam(t *testing.T) {
+	// A JSON-only tool plugs in via convert: {"count":N} -> N SARIF results.
+	td := toolDef{name: "fake-json", convert: func(raw []byte) (*sarif.Report, error) {
+		var v struct {
+			Count int `json:"count"`
+		}
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, err
+		}
+		run := sarif.Run{Tool: sarif.Tool{Driver: sarif.Driver{Name: "fake-json"}}}
+		for i := 0; i < v.Count; i++ {
+			run.Results = append(run.Results, sarif.Result{Level: sarif.LevelError, Message: sarif.Message{Text: "x"}})
+		}
+		return &sarif.Report{Runs: []sarif.Run{run}}, nil
+	}}
+	p := filepath.Join(t.TempDir(), "out.json")
+	if err := os.WriteFile(p, []byte(`{"count":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rep := parseOutput(td, p)
+	if rep == nil || rep.ResultCount() != 2 {
+		t.Fatalf("converter seam failed: %+v", rep)
+	}
+}
+
+func TestParseOutputNativeSARIFWhenNoConverter(t *testing.T) {
+	rep := parseOutput(toolDef{name: "gosec"}, "testdata/gosec.sarif")
+	if rep == nil || rep.ResultCount() != 1 {
+		t.Fatal("native SARIF parse path broken")
+	}
+}
 
 func TestProfileAllows(t *testing.T) {
 	clean := toolDef{name: "trivy"}
