@@ -45,38 +45,46 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0 # full history so gitleaks scans past commits
-      - uses: actions/setup-go@v6
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: stable
       - name: Install uv
         # uv backs the Python scanners (semgrep, guarddog), lazy-fetched at scan time.
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
       - name: Install scanctl
-        run: go install github.com/catenahq/scanctl/cmd/scanctl@${{ inputs.scanctl-version }}
+        env:
+          SCANCTL_VERSION: ${{ inputs.scanctl-version }}
+        run: go install "github.com/catenahq/scanctl/cmd/scanctl@${SCANCTL_VERSION}"
       - name: Run scanctl
         env:
           # zizmor's API-backed audits use this when present; absent = it runs --offline.
           GH_TOKEN: ${{ github.token }}
+          # Inputs routed through env vars, not interpolated into the run: script
+          # (zizmor template-injection: untrusted-context-into-shell sink).
+          NO_GATE: ${{ inputs.no-gate }}
+          PROFILE: ${{ inputs.profile }}
+          SCAN_PATH: ${{ inputs.path }}
         run: |
           gate_flag=""
-          if [ "${{ inputs.no-gate }}" = "true" ]; then gate_flag="--no-gate"; fi
+          if [ "$NO_GATE" = "true" ]; then gate_flag="--no-gate"; fi
           profile_flag=""
-          if [ -n "${{ inputs.profile }}" ]; then profile_flag="--profile ${{ inputs.profile }}"; fi
+          if [ -n "$PROFILE" ]; then profile_flag="--profile $PROFILE"; fi
           "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag \
             --out scanctl.sarif --sbom sbom.cdx.json \
-            --summary "$GITHUB_STEP_SUMMARY" "${{ inputs.path }}"
+            --summary "$GITHUB_STEP_SUMMARY" "$SCAN_PATH"
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463 # v4
         with:
           sarif_file: scanctl.sarif
         continue-on-error: true
       - name: Upload SBOM artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: sbom-cyclonedx
           path: sbom.cdx.json
