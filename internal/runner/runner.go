@@ -60,7 +60,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 			out.Skipped[td.name] = "fetch failed"
 			continue
 		}
-		rep, warn := runTool(ctx, td, bin, root, det)
+		rep, warn := runTool(ctx, td, bin, root, det, cfg.Ignore)
 		if warn != "" {
 			out.Warnings = append(out.Warnings, warn)
 		}
@@ -89,7 +89,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 //   - no report, clean exit      -> tool ran and found nothing (some tools, e.g.
 //     gosec, write no file when clean): an empty report, no warning
 //   - no report, non-zero exit   -> a genuine failure: nil + a warning
-func runTool(ctx context.Context, td toolDef, bin, root string, det detect.Result) (*sarif.Report, string) {
+func runTool(ctx context.Context, td toolDef, bin, root string, det detect.Result, ignore []string) (*sarif.Report, string) {
 	outFile, err := os.CreateTemp("", "scanctl-"+td.name+"-*.sarif")
 	if err != nil {
 		return nil, fmt.Sprintf("%s: temp file: %v", td.name, err)
@@ -99,6 +99,7 @@ func runTool(ctx context.Context, td toolDef, bin, root string, det detect.Resul
 	defer os.Remove(outPath)
 
 	inv := td.invoke(bin, root, outPath, det)
+	inv.args = withSkips(td.name, inv.args, ignore)
 	// #nosec G204 -- bin and args come from the internal tool registry + pinned
 	// tools.lock, never from the scanned repo or user input
 	cmd := exec.CommandContext(ctx, bin, inv.args...)
@@ -127,6 +128,48 @@ func runTool(ctx context.Context, td toolDef, bin, root string, det detect.Resul
 		return emptyReport(td.name), "" // ran clean, no findings, no file written
 	}
 	return nil, fmt.Sprintf("%s: no SARIF produced: %v\n%s", td.name, runErr, diag)
+}
+
+// withSkips threads the configured ignore globs into the tools that walk the
+// whole tree and accept a directory-exclusion flag, so vendored / dependency
+// trees (node_modules, .venv, vendored ansible collections, ...) stop
+// producing findings against upstream files the repo does not own. Detection
+// already honors `ignore`, but trivy's misconfig/secret pass, gosec, and
+// semgrep traverse the filesystem independently and would otherwise flag a
+// Dockerfile shipped inside node_modules or a test .go file inside a vendored
+// collection. Tools without a dir-exclude flag (osv-scanner reads lockfiles,
+// govulncheck reasons over Go packages, zizmor audits a single workflow dir,
+// gitleaks is config-driven) are passed through unchanged.
+//
+// Each skip is inserted immediately before the final positional argument (the
+// scan target / `./...`), which is the correct slot for all three tools.
+func withSkips(name string, args, ignore []string) []string {
+	if len(ignore) == 0 || len(args) == 0 {
+		return args
+	}
+	var skip []string
+	switch name {
+	case "trivy":
+		for _, d := range ignore {
+			skip = append(skip, "--skip-dirs", "**/"+d)
+		}
+	case "gosec":
+		for _, d := range ignore {
+			skip = append(skip, "-exclude-dir", d)
+		}
+	case "semgrep":
+		for _, d := range ignore {
+			skip = append(skip, "--exclude", d)
+		}
+	default:
+		return args
+	}
+	n := len(args)
+	out := make([]string, 0, n+len(skip))
+	out = append(out, args[:n-1]...)
+	out = append(out, skip...)
+	out = append(out, args[n-1])
+	return out
 }
 
 // mergeSARIFRun executes cmd for a non-registry step, reads SARIF from outPath

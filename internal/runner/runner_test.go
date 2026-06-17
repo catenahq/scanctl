@@ -87,7 +87,7 @@ func noOutputTool() toolDef {
 
 func TestRunToolCleanExitNoOutputIsEmptyReport(t *testing.T) {
 	// `true` exits 0 and writes nothing -> ran clean, zero findings, no warning.
-	rep, warn := runTool(context.Background(), noOutputTool(), "/bin/true", ".", detect.Result{})
+	rep, warn := runTool(context.Background(), noOutputTool(), "/bin/true", ".", detect.Result{}, nil)
 	if warn != "" {
 		t.Errorf("clean exit should not warn: %q", warn)
 	}
@@ -101,12 +101,62 @@ func TestRunToolCleanExitNoOutputIsEmptyReport(t *testing.T) {
 
 func TestRunToolFailureNoOutputWarns(t *testing.T) {
 	// `false` exits 1 and writes nothing -> genuine failure: nil + warning.
-	rep, warn := runTool(context.Background(), noOutputTool(), "/bin/false", ".", detect.Result{})
+	rep, warn := runTool(context.Background(), noOutputTool(), "/bin/false", ".", detect.Result{}, nil)
 	if rep != nil {
 		t.Error("failure with no output should be nil")
 	}
 	if warn == "" {
 		t.Error("failure with no output should produce a warning")
+	}
+}
+
+func TestWithSkipsInjectsPerToolDirExcludes(t *testing.T) {
+	ignore := []string{"node_modules", ".venv"}
+
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{
+			name: "trivy",
+			in:   []string{"fs", "--format", "sarif", "/root"},
+			want: []string{"fs", "--format", "sarif",
+				"--skip-dirs", "**/node_modules", "--skip-dirs", "**/.venv", "/root"},
+		},
+		{
+			name: "gosec",
+			in:   []string{"-fmt", "sarif", "-out", "o", "./..."},
+			want: []string{"-fmt", "sarif", "-out", "o",
+				"-exclude-dir", "node_modules", "-exclude-dir", ".venv", "./..."},
+		},
+		{
+			name: "semgrep",
+			in:   []string{"scan", "--config", "p/owasp-top-ten", "/root"},
+			want: []string{"scan", "--config", "p/owasp-top-ten",
+				"--exclude", "node_modules", "--exclude", ".venv", "/root"},
+		},
+	}
+	for _, c := range cases {
+		got := withSkips(c.name, c.in, ignore)
+		if len(got) != len(c.want) {
+			t.Fatalf("%s: len %d != %d (%v)", c.name, len(got), len(c.want), got)
+		}
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Errorf("%s: arg[%d] = %q, want %q", c.name, i, got[i], c.want[i])
+			}
+		}
+	}
+
+	// A tool with no dir-exclude flag is passed through unchanged.
+	in := []string{"scan", "source", "/root"}
+	if got := withSkips("osv-scanner", in, ignore); len(got) != len(in) {
+		t.Errorf("osv-scanner should be unchanged, got %v", got)
+	}
+	// No ignore globs -> no change.
+	if got := withSkips("trivy", in, nil); len(got) != len(in) {
+		t.Errorf("empty ignore should be a no-op, got %v", got)
 	}
 }
 

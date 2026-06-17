@@ -131,7 +131,7 @@ func Default() Config {
 			"guarddog":      {Enabled: true, Mode: ModeReport},
 			"trivy-license": {Enabled: true, Mode: ModeReport},
 		},
-		Ignore: []string{".git", "vendor", "node_modules", "testdata"},
+		Ignore: []string{".git", "vendor", "node_modules", "testdata", ".venv"},
 	}
 }
 
