@@ -1,0 +1,36 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "scanctl secure-base: a generic, parameter-free supply-chain security baseline for Renovate. Extend it from any repo with: extends: github>catenahq/scanctl:secure-base. It carries NO project-specific operational config (PR limits, timezone, labels, schedules) -- layer those in your own config on top.",
+    "Adoption cooldown: minimumReleaseAge holds a release for 7 days. internalChecksFilter=strict plus prCreation=not-pending means Renovate does not open the PR until the release has aged past the cooldown, so CI scans the exact version that will merge. Without this, Renovate would open the PR on release day (scanners run on the day-0 version) and then auto-merge later with no fresh scan, defeating the cooldown. strict alone is NOT sufficient: when every candidate release for a dependency is still inside the cooldown (the normal case for a single fresh release), strict is bypassed and Renovate creates the branch+PR for the latest pending release anyway, leaving renovate/stability-days pending on a day-0 PR (renovatebot/renovate discussions 32829, 42260). prCreation=not-pending closes that bypass by withholding the PR while any branch check (including the internal renovate/stability-days check) is pending; the branch is still created so the internal check can age. In repos whose CI runs only on pull_request, the branch simply waits with the internal check pending, the PR opens on day 7, and the scanners then run on the aged version -- which is the intended flow.",
+    "Pins and digest pins are exempted from the cooldown below: they carry no release age, so timestamp-required + strict would otherwise mark them pending forever and never open the pin PR.",
+    "Security fixes are exempt: vulnerabilityAlerts sets minimumReleaseAge=null and automerges, so a known-CVE patch is not held for 7 days.",
+    "GitHub Actions are SHA-pinned (helpers:pinGitHubActionDigests) and same-tag digest bumps are disabled: a moved tag has no release timestamp to age (timestamp-required marks it pending forever) and auto-adopting it re-introduces the mutable-tag supply-chain risk that SHA-pinning exists to prevent (cf. tj-actions/changed-files, CVE-2025-30066). New action code is adopted only via aged version bumps, which DO carry a release timestamp and pass through the cooldown."
+  ],
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "prCreation": "not-pending",
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "minimumReleaseAge": null,
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "description": "Pins and digest pins carry no release age; never hold them in the adoption cooldown (timestamp-required + strict would otherwise keep them pending forever and never open the pin PR).",
+      "matchUpdateTypes": ["pin", "pinDigest"],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Do not chase github-actions digest (same-tag SHA) updates. A SHA has no release timestamp, so minimumReleaseAge cannot age it (timestamp-required marks it pending forever), and auto-adopting a moved tag re-introduces the mutable-tag supply-chain risk that SHA-pinning exists to prevent (cf. tj-actions/changed-files, CVE-2025-30066). New action code is adopted only via aged version bumps, which DO carry a release timestamp and pass through the cooldown.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest"],
+      "enabled": false
+    }
+  ]
+}
