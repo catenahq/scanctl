@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>catenahq/scanctl:supply-chain"],
+  "extends": ["github>catenahq/scanctl:secure-base"],
   "packageRules": [
     {
       "description": "Go module minor/patch: group + automerge after the shared cooldown.",
