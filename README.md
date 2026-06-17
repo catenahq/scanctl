@@ -112,25 +112,31 @@ warning, never failing the scan.
 
 ## Dependency policy (Renovate preset)
 
-scanctl detects; it never updates. Remediation is Renovate's lane, and the
-suite owns that policy once: [supply-chain.json](supply-chain.json) is a shared
-Renovate preset. Any repo adopts it with a one-line config:
+scanctl detects; it never updates. Remediation is Renovate's lane. scanctl
+publishes a generic, parameter-free security baseline as a shared Renovate
+preset: [secure-base.json](secure-base.json). Any repo adopts it with a one-line
+config:
 
 ```json
-{ "extends": ["github>catenahq/scanctl:supply-chain"] }
+{ "extends": ["github>catenahq/scanctl:secure-base"] }
 ```
 
 The preset enforces a **7-day adoption cooldown** (`minimumReleaseAge`) and --
 critically -- holds PR *creation* until the release has aged
-(`internalChecksFilter: strict`). Without that, the PR opens on release day
-(scanners run on the day-0 version) and auto-merges 7 days later with no fresh
-scan; with it, the PR opens only after the cooldown, so scanctl scans the exact
-version that will merge. Pins (`pin`/`pinDigest`) carry no release age and are
-exempt from the cooldown; github-actions same-tag `digest` refreshes are
-disabled outright (a moved tag re-introduces the mutable-tag risk that
-SHA-pinning prevents). Known-CVE fixes are also exempt (`vulnerabilityAlerts`
-automerges with no cooldown). The same cooldown governs scanctl's own
-`tools.lock` scanner pins.
+(`internalChecksFilter: strict` + `prCreation: not-pending`). Without that, the
+PR opens on release day (scanners run on the day-0 version) and auto-merges 7
+days later with no fresh scan; with it, the PR opens only after the cooldown, so
+scanctl scans the exact version that will merge. Pins (`pin`/`pinDigest`) carry
+no release age and are exempt from the cooldown; github-actions same-tag
+`digest` refreshes are disabled outright (a moved tag re-introduces the
+mutable-tag risk that SHA-pinning prevents). Known-CVE fixes are also exempt
+(`vulnerabilityAlerts` automerges with no cooldown). The same cooldown governs
+scanctl's own `tools.lock` scanner pins.
+
+`secure-base` carries no project-specific operational config (PR limits,
+timezone, labels, schedules) -- layer those on top in your own config. Catena's
+own org-wide Renovate policy lives in the public `github>catenahq/renovate-config`,
+which extends this baseline.
 
 ## Extending: the adapter seam
 
