@@ -23,6 +23,29 @@ func TestNormalizeRendersEmptyResultsArray(t *testing.T) {
 	}
 }
 
+func TestSuppressionsRoundTrip(t *testing.T) {
+	// A semgrep nosemgrep finding arrives with suppressions; the merged output
+	// must keep them so GitHub creates the alert dismissed, not open.
+	in := []byte(`{"$schema":"x","version":"2.1.0","runs":[{"tool":{"driver":{"name":"semgrep"}},` +
+		`"results":[{"ruleId":"r","level":"warning","message":{"text":"m"},` +
+		`"suppressions":[{"kind":"inSource"}]}]}]}`)
+	var rep Report
+	if err := json.Unmarshal(in, &rep); err != nil {
+		t.Fatal(err)
+	}
+	res := rep.Runs[0].Results[0]
+	if !res.Suppressed() {
+		t.Fatal("Suppressed() = false, want true")
+	}
+	out, err := json.Marshal(&rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"suppressions":[{"kind":"inSource"}]`) {
+		t.Errorf("suppressions dropped on re-marshal: %s", out)
+	}
+}
+
 func run(tool string, n int) Run {
 	r := Run{Tool: Tool{Driver: Driver{Name: tool}}}
 	for i := 0; i < n; i++ {

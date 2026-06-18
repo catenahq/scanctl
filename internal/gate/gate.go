@@ -47,6 +47,9 @@ func Evaluate(rep *sarif.Report, cfg config.Config) Result {
 			continue
 		}
 		for _, r := range run.Results {
+			if r.Suppressed() {
+				continue // in-source suppressed (e.g. nosemgrep) never gates
+			}
 			if levelToSeverity(r.Level).Rank() >= floor {
 				res.Gating++
 				res.ByTool[run.Tool.Driver.Name]++

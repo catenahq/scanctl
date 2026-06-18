@@ -60,6 +60,26 @@ func TestBlockModeGatesAtOrAboveFloor(t *testing.T) {
 	}
 }
 
+func TestSuppressedFindingNeverGates(t *testing.T) {
+	cfg := baseCfg() // floor = high; error maps to high
+	// A block-mode error-level finding that the tool suppressed in source
+	// (e.g. nosemgrep) must not gate, even though its severity is at the floor.
+	rep := &sarif.Report{Runs: []sarif.Run{{
+		Tool: sarif.Tool{Driver: sarif.Driver{Name: "trivy"}},
+		Results: []sarif.Result{
+			{Level: sarif.LevelError, Suppressions: []sarif.Suppression{{Kind: "inSource"}}},
+			{Level: sarif.LevelError},
+		},
+	}}}
+	v := Evaluate(rep, cfg)
+	if v.Gating != 1 {
+		t.Errorf("gating = %d, want 1 (suppressed finding excluded)", v.Gating)
+	}
+	if v.Total != 2 {
+		t.Errorf("total = %d, want 2 (suppressed still counted in total)", v.Total)
+	}
+}
+
 func TestFloorRaisedSuppressesGating(t *testing.T) {
 	cfg := baseCfg()
 	cfg.Gate.Floor = config.SevCritical // nothing maps to critical from level alone

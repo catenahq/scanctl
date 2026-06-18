@@ -108,7 +108,7 @@ func Summary(rep *sarif.Report, cfg config.Config) string {
 		for _, res := range run.Results {
 			sev, rank := sevLabel(res.Level)
 			f := finding{tool: run.Tool.Driver.Name, sev: sev, rule: res.RuleID, msg: msg(res), loc: loc(res)}
-			if blocking && rank >= floor {
+			if blocking && rank >= floor && !res.Suppressed() {
 				gating = append(gating, f)
 			} else {
 				advisory = append(advisory, f)

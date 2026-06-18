@@ -47,7 +47,22 @@ type Result struct {
 	Level     string     `json:"level,omitempty"`
 	Message   Message    `json:"message"`
 	Locations []Location `json:"locations,omitempty"`
+	// Suppressions carries a tool's in-source suppressions (e.g. a semgrep
+	// `nosemgrep` comment). It MUST round-trip through the merge: GitHub code
+	// scanning reads it to create the alert in the dismissed state, and the
+	// gate ignores suppressed findings. Dropping it (the pre-fix behavior)
+	// resurfaced every nosemgrep'd finding as an open alert.
+	Suppressions []Suppression `json:"suppressions,omitempty"`
 }
+
+// Suppression marks a result the producing tool suppressed at the source.
+type Suppression struct {
+	Kind string `json:"kind,omitempty"`
+}
+
+// Suppressed reports whether the producing tool suppressed this result in
+// source. Such findings are preserved in the output but never gate the build.
+func (r Result) Suppressed() bool { return len(r.Suppressions) > 0 }
 
 // Message is the human-readable finding text.
 type Message struct {
