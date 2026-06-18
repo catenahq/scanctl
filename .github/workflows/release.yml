@@ -33,6 +33,9 @@ jobs:
               -o "dist/scanctl_linux_${arch}" ./cmd/scanctl
           done
       - name: Release
+        # zizmor: ignore[superfluous-actions] -- this is a self-hosted runner
+        # (see the manual "Put Go on PATH" step); the gh CLI is not guaranteed
+        # present, so `gh release` is not a drop-in. The action is SHA-pinned.
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           files: dist/scanctl_linux_*
