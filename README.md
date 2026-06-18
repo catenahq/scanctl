@@ -57,11 +57,42 @@ fold in the old standalone `licenses-sbom` workflow.
 scanctl run .                 # detect, scan, merge SARIF, gate
 scanctl run --no-gate .       # scan + report, always exit 0
 scanctl run --out out.sarif --summary summary.md ./subdir
+scanctl run --baseline .scanctl/baseline.sarif .   # only NEW findings gate
+scanctl run --import codeql.sarif .                 # fold in external SARIF
 ```
 
 Exit code is non-zero when a tool in `block` mode produces a finding at or above
-the configured gate floor. Config is optional ([`scanctl.example.yml`](scanctl.example.yml));
-with no file, sensible defaults apply.
+the configured gate floor. The floor is compared against each finding's CVSS
+`security-severity` when the tool reports one (the same score GitHub uses),
+falling back to the SARIF level -- so the floor means what it says rather than
+over- or under-gating on a coarse error/warning. Config is optional
+([`scanctl.example.yml`](scanctl.example.yml)); with no file, sensible defaults
+apply.
+
+### Baseline: gate only on new findings
+
+`--baseline <sarif>` diffs the current run against a committed baseline. A
+finding already in the baseline is marked suppressed (`kind: external`) -- the
+gate skips it, GitHub renders it dismissed, and it stays in the SARIF for audit.
+This is the dedup that makes scanctl usable on a large repo without GitHub
+Advanced Security. Seed a baseline by committing a clean run's SARIF; a missing
+baseline file is a no-op. The reusable workflow exposes it as the `baseline`
+input.
+
+### External SARIF (CodeQL and friends)
+
+`--import <sarif>` (repeatable) folds an externally-produced SARIF into the merge
+before the report, gate, and uploads. Run a deeper scanner in its own CI job and
+hand scanctl its output -- e.g. CodeQL, which stays a separate job because it
+owns a database lifecycle scanctl deliberately does not embed:
+
+```yaml
+  - uses: github/codeql-action/init@v4
+    with: { languages: go }
+  - uses: github/codeql-action/analyze@v4
+    with: { upload: false, output: codeql-results }
+  # then call scanctl with import-sarif: codeql-results/go.sarif
+```
 
 ### In CI
 
@@ -73,8 +104,16 @@ jobs:
     uses: catenahq/scanctl/.github/workflows/github-reusable.yml@main
     permissions:
       contents: read
-      security-events: write
+      security-events: write   # code-scanning upload (public / GHAS repos)
+      pull-requests: write     # sticky findings comment (private-repo parity)
 ```
+
+On a private repo without Advanced Security the code-scanning upload is a
+no-op, so the workflow also (a) posts the findings summary as one sticky PR
+comment (updated in place) and (b) uploads `scanctl.sarif` + the SBOM as a
+downloadable artifact. Together with `--baseline` these give private repos the
+same triage surface as the public Security tab. Inputs: `baseline`,
+`import-sarif`, `profile`, `no-gate`, `path`, `runner`.
 
 ## Layout
 
@@ -83,9 +122,11 @@ cmd/scanctl       CLI (run | version)
 internal/detect   manifest-glob router (ecosystems + workflows present)
 internal/runner   lazy-fetch + subprocess orchestration + SARIF merge
                   (registry tools + guarddog/image per-manifest/per-ref steps)
-internal/sarif    minimal SARIF 2.1.0 types
+internal/sarif    minimal SARIF 2.1.0 types (+ suppressions, properties,
+                  fingerprints, security-severity)
 internal/report   merged SARIF writer + markdown summary
-internal/gate     severity floor -> exit code
+internal/gate     security-severity / level floor -> exit code
+internal/baseline diff against a committed baseline (suppress known findings)
 tools.lock        pinned scanner versions (Renovate-managed, embedded)
 ```
 
