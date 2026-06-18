@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/catenahq/scanctl/internal/config"
+	"github.com/catenahq/scanctl/internal/gate"
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
@@ -31,22 +32,6 @@ func WriteSARIF(rep *sarif.Report, path string) error {
 // finding is a flattened result row for the human-readable lists.
 type finding struct {
 	tool, sev, rule, msg, loc string
-}
-
-// sevLabel maps a SARIF level to scanctl's severity label and comparable rank.
-// Mirrors gate.levelToSeverity (error == high) but kept local so report does
-// not depend on the gate package.
-func sevLabel(level string) (string, int) {
-	switch level {
-	case sarif.LevelError:
-		return "HIGH", 3
-	case sarif.LevelWarning:
-		return "MEDIUM", 2
-	case sarif.LevelNote:
-		return "LOW", 1
-	default:
-		return "-", 0
-	}
 }
 
 // Summary renders a markdown overview: total findings, a per-tool breakdown
@@ -105,10 +90,11 @@ func Summary(rep *sarif.Report, cfg config.Config) string {
 	var gating, advisory []finding
 	for _, run := range rep.Runs {
 		blocking := blocks(run.Tool.Driver.Name)
+		rules := run.RulesByID()
 		for _, res := range run.Results {
-			sev, rank := sevLabel(res.Level)
-			f := finding{tool: run.Tool.Driver.Name, sev: sev, rule: res.RuleID, msg: msg(res), loc: loc(res)}
-			if blocking && rank >= floor && !res.Suppressed() {
+			sev := gate.Severity(rules, res)
+			f := finding{tool: run.Tool.Driver.Name, sev: strings.ToUpper(string(sev)), rule: res.RuleID, msg: msg(res), loc: loc(res)}
+			if blocking && sev.Rank() >= floor && !res.Suppressed() {
 				gating = append(gating, f)
 			} else {
 				advisory = append(advisory, f)

@@ -46,6 +46,48 @@ func TestSuppressionsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPropertiesAndFingerprintsRoundTrip(t *testing.T) {
+	in := []byte(`{"runs":[{"tool":{"driver":{"name":"trivy","rules":[` +
+		`{"id":"R","properties":{"security-severity":"7.5"}}]}},` +
+		`"results":[{"ruleId":"R","level":"error","message":{"text":"m"},` +
+		`"partialFingerprints":{"primaryLocationLineHash":"abc"},"properties":{"k":"v"}}]}]}`)
+	var rep Report
+	if err := json.Unmarshal(in, &rep); err != nil {
+		t.Fatal(err)
+	}
+	out, err := json.Marshal(&rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"security-severity":"7.5"`, `"primaryLocationLineHash":"abc"`, `"k":"v"`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("dropped %q on re-marshal: %s", want, out)
+		}
+	}
+	if s, ok := SecuritySeverity(rep.Runs[0].Tool.Driver.Rules[0].Properties); !ok || s != 7.5 {
+		t.Errorf("SecuritySeverity = %v,%v want 7.5,true", s, ok)
+	}
+	if _, ok := SecuritySeverity(map[string]any{}); ok {
+		t.Error("SecuritySeverity ok on empty props")
+	}
+}
+
+func TestFingerprint(t *testing.T) {
+	r := Result{RuleID: "R", Message: Message{Text: "m"}, Locations: []Location{{
+		PhysicalLocation: PhysicalLocation{
+			ArtifactLocation: ArtifactLocation{URI: "a.go"}, Region: &Region{StartLine: 3}}}}}
+	if Fingerprint("trivy", r) != Fingerprint("trivy", r) {
+		t.Error("fingerprint not stable")
+	}
+	if Fingerprint("trivy", r) == Fingerprint("gosec", r) {
+		t.Error("tool not part of fingerprint")
+	}
+	r2 := Result{RuleID: "R", PartialFingerprints: map[string]string{"primaryLocationLineHash": "h"}}
+	if got := Fingerprint("trivy", r2); got != "trivy:R:h" {
+		t.Errorf("partialFingerprint path = %q, want trivy:R:h", got)
+	}
+}
+
 func run(tool string, n int) Run {
 	r := Run{Tool: Tool{Driver: Driver{Name: tool}}}
 	for i := 0; i < n; i++ {

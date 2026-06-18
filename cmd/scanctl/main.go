@@ -9,14 +9,26 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/catenahq/scanctl"
+	"github.com/catenahq/scanctl/internal/baseline"
 	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/gate"
 	"github.com/catenahq/scanctl/internal/report"
 	"github.com/catenahq/scanctl/internal/runner"
+	"github.com/catenahq/scanctl/internal/sarif"
 	"github.com/catenahq/scanctl/internal/upload"
 )
+
+// multiFlag collects a repeatable string flag, e.g. -import a.sarif -import b.sarif.
+type multiFlag []string
+
+func (m *multiFlag) String() string { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error {
+	*m = append(*m, v)
+	return nil
+}
 
 // version is set via -ldflags at release; "dev" for local builds.
 var version = "dev"
@@ -54,6 +66,10 @@ run flags:
   -out string      merged SARIF output path (default "scanctl.sarif")
   -summary string  markdown summary output path (default: stdout only)
   -sbom string     write a CycloneDX SBOM to this path (syft)
+  -baseline string baseline SARIF; findings already in it are suppressed so only
+                   new findings gate (missing file = no-op)
+  -import string   fold an external SARIF file (e.g. CodeQL) into the merge;
+                   repeatable
   -no-gate         scan and report but always exit 0
 
 upload (optional, via scanctl.yml + env): findings -> DefectDojo
@@ -70,6 +86,9 @@ func runCmd(args []string) int {
 	summaryPath := fs.String("summary", "", "")
 	sbomOut := fs.String("sbom", "", "")
 	noGate := fs.Bool("no-gate", false, "")
+	baselinePath := fs.String("baseline", "", "")
+	var imports multiFlag
+	fs.Var(&imports, "import", "")
 	_ = fs.Parse(args)
 
 	root := "."
@@ -104,6 +123,31 @@ func runCmd(args []string) int {
 
 	for _, w := range out.Warnings {
 		fmt.Fprintln(os.Stderr, "warning:", w)
+	}
+
+	// Fold in externally-produced SARIF (e.g. a CodeQL job's output) before
+	// the report, gate, and uploads so everything sees one merged view.
+	for _, p := range imports {
+		ext, err := sarif.Load(p)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "import:", err)
+			return 2
+		}
+		out.Report.Merge(ext)
+		fmt.Printf("imported %d finding(s) from %s\n", ext.ResultCount(), p)
+	}
+
+	// Diff against a committed baseline: findings already in it are marked
+	// suppressed (kind: external) so only NEW findings can gate.
+	if *baselinePath != "" {
+		base, err := baseline.Load(*baselinePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "baseline:", err)
+			return 2
+		}
+		if n := baseline.Apply(out.Report, base); n > 0 {
+			fmt.Printf("baseline: suppressed %d known finding(s) from %s\n", n, *baselinePath)
+		}
 	}
 
 	if err := report.WriteSARIF(out.Report, *outPath); err != nil {

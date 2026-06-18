@@ -60,6 +60,31 @@ func TestBlockModeGatesAtOrAboveFloor(t *testing.T) {
 	}
 }
 
+func TestSecuritySeverityOverridesLevel(t *testing.T) {
+	cfg := baseCfg() // floor = high
+	rep := &sarif.Report{Runs: []sarif.Run{{
+		Tool: sarif.Tool{Driver: sarif.Driver{
+			Name: "trivy",
+			Rules: []sarif.Rule{
+				{ID: "HIGH-CVE", Properties: map[string]any{"security-severity": "8.1"}},
+				{ID: "LOW-CVE", Properties: map[string]any{"security-severity": "2.0"}},
+			},
+		}},
+		Results: []sarif.Result{
+			// level=warning(medium) but CVSS 8.1 -> high -> gates
+			{RuleID: "HIGH-CVE", Level: sarif.LevelWarning},
+			// level=error(high) but CVSS 2.0 -> low -> does not gate
+			{RuleID: "LOW-CVE", Level: sarif.LevelError},
+			// result-level security-severity also honored, beats the rule
+			{RuleID: "HIGH-CVE", Level: sarif.LevelNote, Properties: map[string]any{"security-severity": "9.9"}},
+		},
+	}}}
+	v := Evaluate(rep, cfg)
+	if v.Gating != 2 {
+		t.Errorf("gating = %d, want 2 (CVSS 8.1 and 9.9 gate; 2.0 does not)", v.Gating)
+	}
+}
+
 func TestSuppressedFindingNeverGates(t *testing.T) {
 	cfg := baseCfg() // floor = high; error maps to high
 	// A block-mode error-level finding that the tool suppressed in source
