@@ -10,9 +10,11 @@ name: scanctl
 #       uses: catenahq/scanctl/.github/workflows/github-reusable.yml@main
 #       with:
 #         scanctl-version: v0.1.0
+#         # baseline: .scanctl/baseline.sarif   # only new findings gate
 #       permissions:
 #         contents: read
-#         security-events: write
+#         security-events: write   # code-scanning upload (public / GHAS only)
+#         pull-requests: write     # sticky findings comment (needed on private repos)
 
 on:
   workflow_call:
@@ -33,6 +35,14 @@ on:
         description: profile override ("full" runs resale-restricted tools, e.g. semgrep registry packs); empty = config default
         type: string
         default: ""
+      baseline:
+        description: path to a committed baseline SARIF; findings already in it are suppressed so only new findings gate (missing file = no-op)
+        type: string
+        default: ""
+      import-sarif:
+        description: path to an externally-produced SARIF (e.g. a CodeQL job's output) to fold into the merge
+        type: string
+        default: ""
       runner:
         description: runs-on label
         type: string
@@ -44,6 +54,9 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      # PR-level finding comment for private repos (no Advanced Security). Only
+      # exercised on pull_request events; harmless on push.
+      pull-requests: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -68,24 +81,54 @@ jobs:
           NO_GATE: ${{ inputs.no-gate }}
           PROFILE: ${{ inputs.profile }}
           SCAN_PATH: ${{ inputs.path }}
+          BASELINE: ${{ inputs.baseline }}
+          IMPORT_SARIF: ${{ inputs.import-sarif }}
         run: |
           gate_flag=""
           if [ "$NO_GATE" = "true" ]; then gate_flag="--no-gate"; fi
           profile_flag=""
           if [ -n "$PROFILE" ]; then profile_flag="--profile $PROFILE"; fi
-          "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag \
+          baseline_flag=""
+          if [ -n "$BASELINE" ]; then baseline_flag="--baseline $BASELINE"; fi
+          import_flag=""
+          if [ -n "$IMPORT_SARIF" ]; then import_flag="--import $IMPORT_SARIF"; fi
+          "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag $baseline_flag $import_flag \
             --out scanctl.sarif --sbom sbom.cdx.json \
-            --summary "$GITHUB_STEP_SUMMARY" "$SCAN_PATH"
+            --summary scanctl-summary.md "$SCAN_PATH"
+          cat scanctl-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload SARIF to code scanning
         if: always()
         uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463 # v4
         with:
           sarif_file: scanctl.sarif
         continue-on-error: true
-      - name: Upload SBOM artifact
+      - name: Upload SARIF + SBOM artifacts
+        # Downloadable findings + SBOM even on private repos without Advanced
+        # Security (where the code-scanning upload above is a no-op).
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: sbom-cyclonedx
-          path: sbom.cdx.json
+          name: scanctl-results
+          path: |
+            scanctl.sarif
+            sbom.cdx.json
           if-no-files-found: ignore
+      - name: Comment findings on PR
+        # The Security-tab equivalent for private repos: one sticky comment per
+        # PR, updated in place. Never fails the run.
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          marker="<!-- scanctl-summary -->"
+          { printf '%s\n\n' "$marker"; cat scanctl-summary.md; } > comment.md
+          id="$(gh api "repos/$REPO/issues/$PR/comments" \
+            --jq "map(select(.body | startswith(\"$marker\"))) | .[0].id // empty")"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@comment.md >/dev/null
+          fi
