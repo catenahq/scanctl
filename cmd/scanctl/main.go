@@ -115,7 +115,7 @@ func runCmd(args []string) int {
 	uploadResults(ctx, cfg, *outPath)
 	sbomStep(ctx, cfg, lock, root, *sbomOut)
 
-	summary := report.Summary(out.Report)
+	summary := report.Summary(out.Report, cfg)
 	fmt.Print(summary)
 	fmt.Printf("\nran: %v\n", out.Ran)
 	if *summaryPath != "" {
