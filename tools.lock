@@ -37,4 +37,4 @@ tools:
     version: 1.25.2
   guarddog:
     # renovate: datasource=pypi depName=guarddog
-    version: 2.10.0
+    version: 3.0.1
