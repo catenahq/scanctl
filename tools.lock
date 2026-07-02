@@ -7,11 +7,11 @@ tools:
   trivy:
     repo: aquasecurity/trivy
     # renovate: datasource=github-releases depName=aquasecurity/trivy
-    version: 0.71.0
+    version: 0.71.2
   osv-scanner:
     repo: google/osv-scanner
     # renovate: datasource=github-releases depName=google/osv-scanner
-    version: 2.3.8
+    version: 2.4.0
   gitleaks:
     repo: gitleaks/gitleaks
     # renovate: datasource=github-releases depName=gitleaks/gitleaks
@@ -23,18 +23,18 @@ tools:
   govulncheck:
     module: golang.org/x/vuln
     # renovate: datasource=go depName=golang.org/x/vuln
-    version: 1.3.0
+    version: 1.4.0
   syft:
     repo: anchore/syft
     # renovate: datasource=github-releases depName=anchore/syft
     version: 1.45.1
   semgrep:
     # renovate: datasource=pypi depName=semgrep
-    version: 1.165.0
+    version: 1.168.0
   zizmor:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
-    version: 1.25.2
+    version: 1.26.1
   guarddog:
     # renovate: datasource=pypi depName=guarddog
     version: 3.0.1
