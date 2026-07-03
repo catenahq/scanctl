@@ -23,11 +23,11 @@ tools:
   govulncheck:
     module: golang.org/x/vuln
     # renovate: datasource=go depName=golang.org/x/vuln
-    version: 1.4.0
+    version: 1.5.0
   syft:
     repo: anchore/syft
     # renovate: datasource=github-releases depName=anchore/syft
-    version: 1.45.1
+    version: 1.46.0
   semgrep:
     # renovate: datasource=pypi depName=semgrep
     version: 1.168.0
@@ -37,4 +37,4 @@ tools:
     version: 1.26.1
   guarddog:
     # renovate: datasource=pypi depName=guarddog
-    version: 3.0.1
+    version: 3.0.2
