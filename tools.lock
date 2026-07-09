@@ -7,7 +7,7 @@ tools:
   trivy:
     repo: aquasecurity/trivy
     # renovate: datasource=github-releases depName=aquasecurity/trivy
-    version: 0.71.2
+    version: 0.72.0
   osv-scanner:
     repo: google/osv-scanner
     # renovate: datasource=github-releases depName=google/osv-scanner
