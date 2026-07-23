@@ -14,8 +14,10 @@ import (
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
-// Set is the fingerprint of every finding in a baseline report.
-type Set map[string]struct{}
+// Set counts every finding fingerprint in a baseline report. Counted (not a
+// plain set) so a change that DUPLICATES an existing finding still gates: N
+// baseline instances suppress at most N current matches.
+type Set map[string]int
 
 // Load reads a baseline SARIF file and returns its fingerprint set. A missing
 // file is not an error: an empty set suppresses nothing, so a repo with no
@@ -48,7 +50,7 @@ func FromReport(rep *sarif.Report, roots ...string) Set {
 	for _, run := range rep.Runs {
 		tool := run.Tool.Driver.Name
 		for _, r := range run.Results {
-			s[fingerprintRoot(tool, r, roots)] = struct{}{}
+			s[fingerprintRoot(tool, r, roots)]++
 		}
 	}
 	return s
@@ -69,6 +71,10 @@ func ApplyRoot(rep *sarif.Report, base Set, roots ...string) int {
 		return 0
 	}
 	n := 0
+	left := make(Set, len(base))
+	for k, v := range base {
+		left[k] = v
+	}
 	for ri := range rep.Runs {
 		tool := rep.Runs[ri].Tool.Driver.Name
 		for i := range rep.Runs[ri].Results {
@@ -76,7 +82,8 @@ func ApplyRoot(rep *sarif.Report, base Set, roots ...string) int {
 			if r.Suppressed() {
 				continue
 			}
-			if _, ok := base[fingerprintRoot(tool, *r, roots)]; ok {
+			if fp := fingerprintRoot(tool, *r, roots); left[fp] > 0 {
+				left[fp]--
 				r.Suppressions = append(r.Suppressions, sarif.Suppression{Kind: "external"})
 				n++
 			}
@@ -86,22 +93,36 @@ func ApplyRoot(rep *sarif.Report, base Set, roots ...string) int {
 }
 
 // fingerprintRoot fingerprints r with every root stripped from its primary-
-// location URI and message. The tool-provided partialFingerprints hash is
-// dropped in this mode: it is NOT checkout-independent (osv-scanner's
-// primaryLocationLineHash differs between two checkouts of the identical
-// tree, evidently folding the absolute path in), so cross-checkout matching
-// must use the synthesized tool+rule+location+message fingerprint over
-// normalized paths. r is a value copy, but Locations is a shared slice, so
-// the primary location is cloned before rewriting.
+// location URI and message. Two further fields are dropped in this mode
+// because they are not stable across two checkouts of related trees:
+//   - the tool-provided partialFingerprints hash (osv-scanner's
+//     primaryLocationLineHash differs between two checkouts of the identical
+//     tree, evidently folding the absolute path in);
+//   - the line number (an edit higher up the same file -- e.g. a lockfile
+//     dependency bump -- shifts every finding below it, which made trivy's
+//     pre-existing lockfile CVEs gate on any PR touching the lockfile).
+//
+// The fingerprint is therefore tool+rule+file+message over normalized paths;
+// duplicate instances are handled by the counted Set, not by line identity.
+// r is a value copy, but Locations is a shared slice, so the primary
+// location is cloned before rewriting.
 func fingerprintRoot(tool string, r sarif.Result, roots []string) string {
-	if len(roots) == 0 {
+	var rs []string
+	for _, root := range roots {
+		if root != "" {
+			rs = append(rs, root)
+		}
+	}
+	if len(rs) == 0 {
 		return sarif.Fingerprint(tool, r)
 	}
+	roots = rs
 	r.PartialFingerprints = nil
 	if len(r.Locations) > 0 {
 		r.Locations = append([]sarif.Location(nil), r.Locations...)
-		loc := &r.Locations[0].PhysicalLocation.ArtifactLocation
-		loc.URI = stripRoots(loc.URI, roots)
+		pl := &r.Locations[0].PhysicalLocation
+		pl.ArtifactLocation.URI = stripRoots(pl.ArtifactLocation.URI, roots)
+		pl.Region = nil
 	}
 	r.Message.Text = stripRoots(r.Message.Text, roots)
 	return sarif.Fingerprint(tool, r)

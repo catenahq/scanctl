@@ -74,6 +74,42 @@ func TestRootNormalizationMatchesAcrossCheckouts(t *testing.T) {
 	}
 }
 
+func TestRootNormalizationIgnoresLineShift(t *testing.T) {
+	// An edit higher up the same file (a lockfile bump) shifts every finding
+	// below it; the same CVE on the same package must still match.
+	base := FromReport(&sarif.Report{Runs: []sarif.Run{
+		mk("trivy", "CVE-1", "/wt/package-lock.json", 3953),
+	}}, "/wt")
+	cur := &sarif.Report{Runs: []sarif.Run{
+		mk("trivy", "CVE-1", "/repo/package-lock.json", 4104),
+	}}
+	if n := ApplyRoot(cur, base, "/repo"); n != 1 {
+		t.Fatalf("suppressed = %d, want 1", n)
+	}
+}
+
+func TestDuplicateInstancesBeyondBaselineCountStillGate(t *testing.T) {
+	// Line identity is gone in cross-checkout mode, so duplicates are
+	// bounded by COUNT: one baseline instance suppresses one current match;
+	// a second identical instance the change introduces stays gating.
+	base := FromReport(&sarif.Report{Runs: []sarif.Run{
+		mk("zizmor", "unpinned", "/wt/.github/workflows/ci.yml", 10),
+	}}, "/wt")
+	cur := &sarif.Report{Runs: []sarif.Run{
+		mk("zizmor", "unpinned", "/repo/.github/workflows/ci.yml", 10),
+		mk("zizmor", "unpinned", "/repo/.github/workflows/ci.yml", 90),
+	}}
+	if n := ApplyRoot(cur, base, "/repo"); n != 1 {
+		t.Fatalf("suppressed = %d, want 1", n)
+	}
+	if !cur.Runs[0].Results[0].Suppressed() {
+		t.Error("first instance should be suppressed")
+	}
+	if cur.Runs[1].Results[0].Suppressed() {
+		t.Error("second (new) instance must keep gating")
+	}
+}
+
 func TestRootNormalizationIgnoresPathDependentToolHashes(t *testing.T) {
 	// osv-scanner's primaryLocationLineHash differs between two checkouts of
 	// the identical tree (it folds the absolute path in), so cross-checkout
