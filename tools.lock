@@ -19,7 +19,7 @@ tools:
   gosec:
     repo: securego/gosec
     # renovate: datasource=github-releases depName=securego/gosec
-    version: 2.27.1
+    version: 2.28.0
   govulncheck:
     module: golang.org/x/vuln
     # renovate: datasource=go depName=golang.org/x/vuln
@@ -30,11 +30,11 @@ tools:
     version: 1.46.0
   semgrep:
     # renovate: datasource=pypi depName=semgrep
-    version: 1.168.0
+    version: 1.170.0
   zizmor:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
-    version: 1.26.1
+    version: 1.27.0
   guarddog:
     # renovate: datasource=pypi depName=guarddog
     version: 3.1.0
