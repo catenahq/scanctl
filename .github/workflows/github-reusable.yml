@@ -75,6 +75,10 @@ jobs:
       - name: Install scanctl
         env:
           SCANCTL_VERSION: ${{ inputs.scanctl-version }}
+          # Resolve catenahq modules straight from git, not proxy.golang.org:
+          # the proxy caches branch resolution (~30 min), so @main could
+          # install a scanctl OLDER than the workflow that invokes it.
+          GOPRIVATE: github.com/catenahq/*
         run: go install "github.com/catenahq/scanctl/cmd/scanctl@${SCANCTL_VERSION}"
       - name: Run scanctl
         env:
