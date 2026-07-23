@@ -40,6 +40,13 @@ ignore:
   - node_modules
   - testdata
 
+# License identifiers the repo has reviewed and accepted; dropped from the
+# trivy-license pass entirely (trivy --ignored-licenses) instead of surfacing
+# as restricted-license findings on every run.
+# license:
+#   ignored:
+#     - LGPL-3.0-or-later
+
 # Aggregation plane (optional). Leave URLs empty for serverless operation.
 # Credentials are env vars, never committed:
 #   DEFECTDOJO_TOKEN          -> findings dashboard

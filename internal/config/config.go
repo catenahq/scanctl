@@ -68,6 +68,8 @@ type Config struct {
 	// Images are container refs to scan with trivy image (in addition to the fs
 	// scan). Empty = no image scan; only repos that ship images set this.
 	Images []string `yaml:"images"`
+	// License tunes the trivy-license pass.
+	License LicenseConfig `yaml:"license"`
 	// Upload targets the aggregation plane (P2/P3); empty = serverless (v1).
 	Upload UploadConfig `yaml:"upload"`
 }
@@ -81,6 +83,14 @@ const (
 // GateConfig holds the global severity floor.
 type GateConfig struct {
 	Floor Severity `yaml:"floor"`
+}
+
+// LicenseConfig tunes the trivy-license pass. Ignored is a list of license
+// identifiers (e.g. LGPL-3.0-or-later) the repo has reviewed and accepted;
+// they are dropped from the scan entirely (trivy --ignored-licenses) instead
+// of surfacing as restricted-license findings on every run.
+type LicenseConfig struct {
+	Ignored []string `yaml:"ignored"`
 }
 
 // UploadConfig points scanctl at the aggregation plane. A target is active only
@@ -166,6 +176,9 @@ func Load(path string) (Config, error) {
 	}
 	if fromFile.Images != nil {
 		cfg.Images = fromFile.Images
+	}
+	if fromFile.License.Ignored != nil {
+		cfg.License = fromFile.License
 	}
 	cfg.Upload = fromFile.Upload
 	switch cfg.Profile {

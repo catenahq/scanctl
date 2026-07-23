@@ -92,6 +92,26 @@ func TestLoadImagesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLoadLicenseIgnored(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scanctl.yml")
+	yml := "license:\n  ignored:\n    - LGPL-3.0-or-later\n"
+	if err := os.WriteFile(path, []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.License.Ignored) != 1 || cfg.License.Ignored[0] != "LGPL-3.0-or-later" {
+		t.Errorf("license.ignored = %v, want [LGPL-3.0-or-later]", cfg.License.Ignored)
+	}
+	// Absent key keeps the empty default.
+	if d := Default(); len(d.License.Ignored) != 0 {
+		t.Errorf("default license.ignored = %v, want empty", d.License.Ignored)
+	}
+}
+
 func TestLoadRejectsInvalidProfile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "scanctl.yml")

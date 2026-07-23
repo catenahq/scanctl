@@ -68,6 +68,10 @@ run flags:
   -sbom string     write a CycloneDX SBOM to this path (syft)
   -baseline string baseline SARIF; findings already in it are suppressed so only
                    new findings gate (missing file = no-op)
+  -baseline-ref string
+                   git ref (e.g. origin/main); the merge-base of HEAD and it is
+                   scanned in a temp worktree and its findings are suppressed,
+                   so only findings introduced since the base gate (PR CI use)
   -import string   fold an external SARIF file (e.g. CodeQL) into the merge;
                    repeatable
   -no-gate         scan and report but always exit 0
@@ -87,6 +91,7 @@ func runCmd(args []string) int {
 	sbomOut := fs.String("sbom", "", "")
 	noGate := fs.Bool("no-gate", false, "")
 	baselinePath := fs.String("baseline", "", "")
+	baselineRef := fs.String("baseline-ref", "", "")
 	var imports multiFlag
 	fs.Var(&imports, "import", "")
 	_ = fs.Parse(args)
@@ -135,6 +140,19 @@ func runCmd(args []string) int {
 		}
 		out.Report.Merge(ext)
 		fmt.Printf("imported %d finding(s) from %s\n", ext.ResultCount(), p)
+	}
+
+	// Diff against the merge-base with a git ref: findings already present
+	// there are marked suppressed so only findings this change INTRODUCES can
+	// gate. A failed baseline scan degrades to the full gate (stricter, never
+	// looser) with a warning rather than failing the run.
+	if *baselineRef != "" {
+		set, sha, err := baselineRefSet(context.Background(), root, *baselineRef, cfg, lock)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "warning: baseline-ref:", err)
+		} else if n := baseline.ApplyRoot(out.Report, set, absPath(root)); n > 0 {
+			fmt.Printf("baseline-ref: suppressed %d finding(s) already present at %.12s\n", n, sha)
+		}
 	}
 
 	// Diff against a committed baseline: findings already in it are marked

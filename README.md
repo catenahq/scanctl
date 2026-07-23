@@ -58,6 +58,7 @@ scanctl run .                 # detect, scan, merge SARIF, gate
 scanctl run --no-gate .       # scan + report, always exit 0
 scanctl run --out out.sarif --summary summary.md ./subdir
 scanctl run --baseline .scanctl/baseline.sarif .   # only NEW findings gate
+scanctl run --baseline-ref origin/main .            # only findings new vs the merge-base gate
 scanctl run --import codeql.sarif .                 # fold in external SARIF
 ```
 
@@ -78,6 +79,17 @@ This is the dedup that makes scanctl usable on a large repo without GitHub
 Advanced Security. Seed a baseline by committing a clean run's SARIF; a missing
 baseline file is a no-op. The reusable workflow exposes it as the `baseline`
 input.
+
+`--baseline-ref <git-ref>` is the committed-file-free variant for PR CI: the
+merge-base of HEAD and the ref is scanned in a temporary git worktree and its
+findings become the baseline, so only findings the change INTRODUCES gate. A
+CVE published overnight against a dependency the PR does not touch stops
+blocking every open PR; push/cron runs (no `--baseline-ref`) keep the full
+gate, so pre-existing findings still fail the default branch and surface for
+their own fix. A failed baseline scan degrades to the full gate (stricter,
+never looser) with a warning. The reusable workflow passes
+`--baseline-ref origin/<base>` automatically on `pull_request` events
+(opt out with `no-baseline-ref: true`).
 
 ### External SARIF (CodeQL and friends)
 
@@ -113,7 +125,7 @@ no-op, so the workflow also (a) posts the findings summary as one sticky PR
 comment (updated in place) and (b) uploads `scanctl.sarif` + the SBOM as a
 downloadable artifact. Together with `--baseline` these give private repos the
 same triage surface as the public Security tab. Inputs: `baseline`,
-`import-sarif`, `profile`, `no-gate`, `path`, `runner`.
+`no-baseline-ref`, `import-sarif`, `profile`, `no-gate`, `path`, `runner`.
 
 ## Layout
 

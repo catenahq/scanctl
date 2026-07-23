@@ -39,6 +39,10 @@ on:
         description: path to a committed baseline SARIF; findings already in it are suppressed so only new findings gate (missing file = no-op)
         type: string
         default: ""
+      no-baseline-ref:
+        description: disable the automatic merge-base diff gate on pull_request events (by default PR runs pass --baseline-ref origin/<base> so only findings the PR introduces gate; push/cron runs always keep the full gate)
+        type: boolean
+        default: false
       import-sarif:
         description: path to an externally-produced SARIF (e.g. a CodeQL job's output) to fold into the merge
         type: string
@@ -82,6 +86,13 @@ jobs:
           PROFILE: ${{ inputs.profile }}
           SCAN_PATH: ${{ inputs.path }}
           BASELINE: ${{ inputs.baseline }}
+          # On pull_request, diff-gate against the merge-base with the target
+          # branch: only findings the PR introduces gate; pre-existing repo
+          # findings (a CVE published against a dep the PR does not touch) are
+          # suppressed instead of blocking every open PR. push/cron runs keep
+          # the full gate, so pre-existing findings still fail the default
+          # branch and surface for their own fix.
+          BASELINE_REF: ${{ github.event_name == 'pull_request' && !inputs.no-baseline-ref && format('origin/{0}', github.base_ref) || '' }}
           IMPORT_SARIF: ${{ inputs.import-sarif }}
         run: |
           gate_flag=""
@@ -90,9 +101,11 @@ jobs:
           if [ -n "$PROFILE" ]; then profile_flag="--profile $PROFILE"; fi
           baseline_flag=""
           if [ -n "$BASELINE" ]; then baseline_flag="--baseline $BASELINE"; fi
+          baseline_ref_flag=""
+          if [ -n "$BASELINE_REF" ]; then baseline_ref_flag="--baseline-ref $BASELINE_REF"; fi
           import_flag=""
           if [ -n "$IMPORT_SARIF" ]; then import_flag="--import $IMPORT_SARIF"; fi
-          "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag $baseline_flag $import_flag \
+          "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag $baseline_flag $baseline_ref_flag $import_flag \
             --out scanctl.sarif --sbom sbom.cdx.json \
             --summary scanctl-summary.md "$SCAN_PATH"
           cat scanctl-summary.md >> "$GITHUB_STEP_SUMMARY"
