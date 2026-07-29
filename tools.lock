@@ -30,11 +30,11 @@ tools:
     version: 1.49.0
   semgrep:
     # renovate: datasource=pypi depName=semgrep
-    version: 1.170.0
+    version: 1.170.1
   zizmor:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
-    version: 1.27.0
+    version: 1.28.0
   guarddog:
     # renovate: datasource=pypi depName=guarddog
     version: 3.1.0
