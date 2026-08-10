@@ -28,6 +28,11 @@
       "minimumReleaseAge": null
     },
     {
+      "description": "lockFileMaintenance bundles many packages at once, so it has no single release timestamp to age -- timestamp-required + strict holds it pending forever (confirmed: no lockFileMaintenance PR has completed in any consumer repo since this cooldown landed on 2026-06-17, vs. routine merges before that date). Exempt it like pin/pinDigest so the weekly relock actually opens a PR; the relock re-resolves every dependency within its existing declared range, which is how most transitive-only CVE fixes reach the lockfile without a direct-dependency bump.",
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "minimumReleaseAge": null
+    },
+    {
       "description": "Do not chase github-actions digest (same-tag SHA) updates. A SHA has no release timestamp, so minimumReleaseAge cannot age it (timestamp-required marks it pending forever), and auto-adopting a moved tag re-introduces the mutable-tag supply-chain risk that SHA-pinning exists to prevent (cf. tj-actions/changed-files, CVE-2025-30066). New action code is adopted only via aged version bumps, which DO carry a release timestamp and pass through the cooldown.",
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["digest"],
