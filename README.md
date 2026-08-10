@@ -98,6 +98,34 @@ Actions); a no-op outside that environment, and always skipped on
 what the org has accepted repo-wide. The reusable workflow enables it by
 default (`dismiss-baseline: true`) whenever `baseline` is set.
 
+#### Seeding or regenerating a baseline
+
+```sh
+scanctl run --profile full --out current.sarif --sbom /tmp/sbom.json \
+  --summary /dev/null .
+python3 - <<'PY'
+import json
+rep = json.load(open("current.sarif"))
+runs = [
+    {"tool": {"driver": {"name": r["tool"]["driver"]["name"]}}, "results": r["results"]}
+    for r in rep.get("runs", []) if r.get("results")
+]
+out = {"$schema": rep["$schema"], "version": rep["version"], "runs": runs}
+json.dump(out, open(".scanctl/baseline.sarif", "w"), indent=2)
+open(".scanctl/baseline.sarif", "a").write("\n")
+PY
+```
+
+Review the diff before committing: every entry must be a finding a human has
+confirmed is benign, not just "whatever the scan happened to produce." A
+consumer repo's own `.scanctl/README.md` should record repo-specific context
+(what's baselined here and why) and link back here for the mechanism, rather
+than restating it -- see `catenahq/docs/.scanctl/README.md` for an example of
+that split. Pair a committed baseline with a weekly no-baseline re-scan (a
+`baseline-drift.yml` comparing fingerprints) so it can't rot silently; docs'
+`.scanctl/drift-check.py` is a ready-made comparator (mirrors
+`internal/sarif.Fingerprint`).
+
 `--baseline-ref <git-ref>` is the committed-file-free variant for PR CI: the
 merge-base of HEAD and the ref is scanned in a temporary git worktree and its
 findings become the baseline, so only findings the change INTRODUCES gate. A
