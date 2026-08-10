@@ -73,12 +73,30 @@ apply.
 ### Baseline: gate only on new findings
 
 `--baseline <sarif>` diffs the current run against a committed baseline. A
-finding already in the baseline is marked suppressed (`kind: external`) -- the
-gate skips it, GitHub renders it dismissed, and it stays in the SARIF for audit.
-This is the dedup that makes scanctl usable on a large repo without GitHub
-Advanced Security. Seed a baseline by committing a clean run's SARIF; a missing
-baseline file is a no-op. The reusable workflow exposes it as the `baseline`
-input.
+finding already in the baseline is marked suppressed (`kind: external`) in the
+merged SARIF -- the gate skips it, and it stays in the SARIF for audit. This is
+the dedup that makes scanctl usable on a large repo without GitHub Advanced
+Security. Seed a baseline by committing a clean run's SARIF; a missing baseline
+file is a no-op. The reusable workflow exposes it as the `baseline` input.
+
+GitHub's code-scanning SARIF ingestion does **not** act on `kind: external`
+suppressions -- confirmed empirically (a baselined finding stays open on the
+Security tab after upload) and consistent with GitHub's own SARIF-support docs,
+which list no `suppressions` property support for third-party uploads. (It
+does honor `kind: inSource`, e.g. a tool's own `nosemgrep` comment -- that
+class of suppression is untouched by any of this.) `--dismiss-baseline` closes
+the gap: after the baseline diff, for every `external`-suppressed finding it
+looks up and closes the matching **open** GitHub code-scanning alert via the
+REST API (`dismissed_reason: "won't fix"`), so the Security tab actually
+reflects what the baseline says is already known. Matching is coarser than the
+baseline's own fingerprint (tool + rule + file + line, no message text --
+that's all the alerts API exposes), so it can only ever close an alert that
+would already gate-pass; it never touches an unsuppressed finding. Requires
+`GITHUB_REPOSITORY` + `GH_TOKEN`/`GITHUB_TOKEN` (both already present in
+Actions); a no-op outside that environment, and always skipped on
+`pull_request` events -- a feature-branch run is never the source of truth for
+what the org has accepted repo-wide. The reusable workflow enables it by
+default (`dismiss-baseline: true`) whenever `baseline` is set.
 
 `--baseline-ref <git-ref>` is the committed-file-free variant for PR CI: the
 merge-base of HEAD and the ref is scanned in a temporary git worktree and its
@@ -125,7 +143,8 @@ no-op, so the workflow also (a) posts the findings summary as one sticky PR
 comment (updated in place) and (b) uploads `scanctl.sarif` + the SBOM as a
 downloadable artifact. Together with `--baseline` these give private repos the
 same triage surface as the public Security tab. Inputs: `baseline`,
-`no-baseline-ref`, `import-sarif`, `profile`, `no-gate`, `path`, `runner`.
+`dismiss-baseline`, `no-baseline-ref`, `import-sarif`, `profile`, `no-gate`,
+`path`, `runner`.
 
 ## Layout
 

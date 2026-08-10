@@ -39,6 +39,10 @@ on:
         description: path to a committed baseline SARIF; findings already in it are suppressed so only new findings gate (missing file = no-op)
         type: string
         default: ""
+      dismiss-baseline:
+        description: also close the matching GitHub code-scanning alert for every -baseline-suppressed finding (GitHub does not act on SARIF "external" suppressions on its own). Only applies when baseline is set; always skipped on pull_request events.
+        type: boolean
+        default: true
       no-baseline-ref:
         description: disable the automatic merge-base diff gate on pull_request events (by default PR runs pass --baseline-ref origin/<base> so only findings the PR introduces gate; push/cron runs always keep the full gate)
         type: boolean
@@ -90,6 +94,7 @@ jobs:
           PROFILE: ${{ inputs.profile }}
           SCAN_PATH: ${{ inputs.path }}
           BASELINE: ${{ inputs.baseline }}
+          DISMISS_BASELINE: ${{ inputs.dismiss-baseline }}
           # On pull_request, diff-gate against the merge-base with the target
           # branch: only findings the PR introduces gate; pre-existing repo
           # findings (a CVE published against a dep the PR does not touch) are
@@ -105,11 +110,13 @@ jobs:
           if [ -n "$PROFILE" ]; then profile_flag="--profile $PROFILE"; fi
           baseline_flag=""
           if [ -n "$BASELINE" ]; then baseline_flag="--baseline $BASELINE"; fi
+          dismiss_flag=""
+          if [ -n "$BASELINE" ] && [ "$DISMISS_BASELINE" = "true" ]; then dismiss_flag="--dismiss-baseline"; fi
           baseline_ref_flag=""
           if [ -n "$BASELINE_REF" ]; then baseline_ref_flag="--baseline-ref $BASELINE_REF"; fi
           import_flag=""
           if [ -n "$IMPORT_SARIF" ]; then import_flag="--import $IMPORT_SARIF"; fi
-          "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag $baseline_flag $baseline_ref_flag $import_flag \
+          "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag $baseline_flag $dismiss_flag $baseline_ref_flag $import_flag \
             --out scanctl.sarif --sbom sbom.cdx.json \
             --summary scanctl-summary.md "$SCAN_PATH"
           cat scanctl-summary.md >> "$GITHUB_STEP_SUMMARY"

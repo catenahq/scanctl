@@ -14,6 +14,7 @@ import (
 	"github.com/catenahq/scanctl"
 	"github.com/catenahq/scanctl/internal/baseline"
 	"github.com/catenahq/scanctl/internal/config"
+	"github.com/catenahq/scanctl/internal/dismiss"
 	"github.com/catenahq/scanctl/internal/gate"
 	"github.com/catenahq/scanctl/internal/report"
 	"github.com/catenahq/scanctl/internal/runner"
@@ -68,6 +69,12 @@ run flags:
   -sbom string     write a CycloneDX SBOM to this path (syft)
   -baseline string baseline SARIF; findings already in it are suppressed so only
                    new findings gate (missing file = no-op)
+  -dismiss-baseline
+                   also close the matching GitHub code-scanning alert for every
+                   -baseline-suppressed finding (GitHub does not act on SARIF
+                   "external" suppressions itself). Requires GITHUB_REPOSITORY +
+                   GH_TOKEN/GITHUB_TOKEN (set by Actions); a no-op elsewhere.
+                   Ignored unless -baseline is also set.
   -baseline-ref string
                    git ref (e.g. origin/main); the merge-base of HEAD and it is
                    scanned in a temp worktree and its findings are suppressed,
@@ -91,6 +98,7 @@ func runCmd(args []string) int {
 	sbomOut := fs.String("sbom", "", "")
 	noGate := fs.Bool("no-gate", false, "")
 	baselinePath := fs.String("baseline", "", "")
+	dismissBaseline := fs.Bool("dismiss-baseline", false, "")
 	baselineRef := fs.String("baseline-ref", "", "")
 	var imports multiFlag
 	fs.Var(&imports, "import", "")
@@ -165,6 +173,23 @@ func runCmd(args []string) int {
 		}
 		if n := baseline.Apply(out.Report, base); n > 0 {
 			fmt.Printf("baseline: suppressed %d known finding(s) from %s\n", n, *baselinePath)
+		}
+
+		// The SARIF suppression above never closes the GitHub alert itself
+		// (GitHub does not act on third-party "external" suppressions) --
+		// close it directly through the API instead. Skipped on a
+		// pull_request event: a feature-branch run is not the source of
+		// truth for what the org has accepted, so it must never dismiss a
+		// repo-wide alert.
+		if *dismissBaseline && os.Getenv("GITHUB_EVENT_NAME") != "pull_request" {
+			if gh, ok := dismiss.FromEnv(); ok {
+				n, err := gh.Dismiss(context.Background(), out.Report)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "warning: dismiss-baseline:", err)
+				} else if n > 0 {
+					fmt.Printf("dismiss-baseline: closed %d matching GitHub alert(s)\n", n)
+				}
+			}
 		}
 	}
 
