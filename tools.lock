@@ -34,7 +34,7 @@ tools:
   zizmor:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
-    version: 1.28.0
+    version: 1.29.0
   guarddog:
     # renovate: datasource=pypi depName=guarddog
     version: 3.1.0
