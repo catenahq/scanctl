@@ -51,6 +51,19 @@ inherit the fs scan's blocking gate). The reusable workflow also emits a syft
 CycloneDX SBOM (`sbom.cdx.json`) and uploads it as an artifact -- together these
 fold in the old standalone `licenses-sbom` workflow.
 
+## Install
+
+```sh
+go install github.com/catenahq/scanctl/cmd/scanctl@main
+```
+
+Public module, so this needs nothing beyond `go` on `PATH` -- no `GOPRIVATE`,
+no auth. Installs to `$(go env GOPATH)/bin`; put that on `PATH` (or invoke it
+as `"$(go env GOPATH)/bin/scanctl"`, which is what every CI workflow in this
+org does, since the runner's own `PATH` isn't guaranteed to include it). Pin
+`@vX.Y.Z` instead of `@main` for a reproducible one-off run; CI stays on
+`@main` deliberately (see `.github/workflows/github-reusable.yml`).
+
 ## Usage
 
 ```sh
