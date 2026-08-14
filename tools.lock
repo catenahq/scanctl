@@ -11,7 +11,7 @@ tools:
   osv-scanner:
     repo: google/osv-scanner
     # renovate: datasource=github-releases depName=google/osv-scanner
-    version: 2.4.0
+    version: 2.5.0
   gitleaks:
     repo: gitleaks/gitleaks
     # renovate: datasource=github-releases depName=gitleaks/gitleaks
