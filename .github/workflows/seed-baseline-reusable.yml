@@ -76,7 +76,13 @@ jobs:
           PROFILE: ${{ inputs.profile }}
         working-directory: ${{ inputs.path }}
         run: |
-          "$(go env GOPATH)/bin/scanctl" run --profile "$PROFILE" \
+          # --no-gate: this scan is a CENSUS, not a verdict. Without it scanctl
+          # exits 1 whenever the repo has gating findings, and the step dies
+          # here -- before the baseline is written and before the PR is opened.
+          # A workflow whose whole purpose is to record the current findings
+          # cannot fail on the current findings, and a repo with none has
+          # nothing to seed. The review gate is the PR, as the header says.
+          "$(go env GOPATH)/bin/scanctl" run --no-gate --profile "$PROFILE" \
             --out /tmp/scanctl-seed-current.sarif --summary /dev/null .
           mkdir -p .scanctl
           python3 - <<'PY'
