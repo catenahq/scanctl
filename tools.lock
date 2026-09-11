@@ -30,7 +30,7 @@ tools:
     version: 1.51.1
   semgrep:
     # renovate: datasource=pypi depName=semgrep
-    version: 1.176.0
+    version: 1.176.1
   zizmor:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
