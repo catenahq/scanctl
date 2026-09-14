@@ -92,6 +92,30 @@ func TestLoadImagesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLoadImagePinsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scanctl.yml")
+	yml := "image_pins:\n" +
+		"  - file: payload/engines/tier1/catalog.go\n" +
+		"    pattern: 'c\\.\\w+Image = \"([^\"]+)\"'\n"
+	if err := os.WriteFile(path, []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ImagePins) != 1 {
+		t.Fatalf("image_pins = %v, want the one configured pin", cfg.ImagePins)
+	}
+	if cfg.ImagePins[0].File != "payload/engines/tier1/catalog.go" {
+		t.Errorf("file = %q", cfg.ImagePins[0].File)
+	}
+	if cfg.ImagePins[0].Pattern == "" {
+		t.Error("pattern did not survive the round trip")
+	}
+}
+
 func TestLoadLicenseIgnored(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "scanctl.yml")

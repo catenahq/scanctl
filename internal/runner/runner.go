@@ -76,9 +76,14 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 	// Steps whose shape the detect-driven registry does not fit (per-manifest,
 	// per-image) run after the loop and merge into the same report. Like
 	// runTool, a failure is a warning, never fatal (robustness over strictness).
+	// imageStep is the one exception, and only for an image_pins entry that
+	// resolves to nothing: that is a broken config, and letting it pass would
+	// report a clean run for an image nothing scanned.
 	guarddogStep(ctx, cfg, lock, root, out)
 	licenseStep(ctx, cfg, lock, root, out)
-	imageStep(ctx, cfg, lock, out)
+	if err := imageStep(ctx, cfg, lock, root, out); err != nil {
+		return nil, err
+	}
 
 	return out, nil
 }

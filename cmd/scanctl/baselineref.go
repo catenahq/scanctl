@@ -18,7 +18,13 @@ import (
 // Used on pull_request CI so only findings the PR INTRODUCES gate: everything
 // already present on the base branch is suppressed (kind: external), while
 // push/cron runs (no -baseline-ref) keep the full gate.
-func baselineRefSet(ctx context.Context, root, ref string, cfg config.Config, lock runner.Lock) (baseline.Set, string, error) {
+//
+// cfgPath and profile are what main parsed, so the baseline scan can re-read
+// the config from the worktree: settings that name things OUTSIDE the tree --
+// `images`, above all -- do not rewind with the checked-out files, and reusing
+// HEAD's config would scan HEAD's image on both sides of the diff and suppress
+// every finding as pre-existing.
+func baselineRefSet(ctx context.Context, root, ref, cfgPath, profile string, cfg config.Config, lock runner.Lock) (baseline.Set, string, error) {
 	sha, err := gitOut(ctx, root, "merge-base", "HEAD", ref)
 	if err != nil {
 		return nil, "", fmt.Errorf("merge-base HEAD %s: %w", ref, err)
@@ -41,7 +47,7 @@ func baselineRefSet(ctx context.Context, root, ref string, cfg config.Config, lo
 		}
 	}()
 
-	out, err := runner.Run(ctx, dir, cfg, lock)
+	out, err := runner.Run(ctx, dir, worktreeConfig(cfgPath, profile, root, dir, cfg), lock)
 	if err != nil {
 		return nil, "", fmt.Errorf("baseline scan: %w", err)
 	}
@@ -52,6 +58,31 @@ func baselineRefSet(ctx context.Context, root, ref string, cfg config.Config, lo
 	// the MAIN checkout (it resolves the repo root through the shared gitdir),
 	// so worktree- and main-rooted URIs must both normalize away.
 	return baseline.FromReport(out.Report, absPath(dir), absPath(root)), sha, nil
+}
+
+// worktreeConfig re-reads scanctl.yml from the merge-base worktree so the
+// baseline scan runs under the configuration the base branch declared. A
+// config kept outside the scanned tree is shared by both sides and is returned
+// unchanged, as is one that fails to re-read (a warning, then HEAD's config:
+// the baseline suppresses less and the gate stays stricter).
+//
+// A config that does not exist at the merge base loads as defaults, which
+// declare no images -- so a newly added pin has no baseline and every one of
+// its findings gates. That is the right way round.
+func worktreeConfig(cfgPath, profile, root, dir string, cur config.Config) config.Config {
+	rel, err := filepath.Rel(absPath(root), absPath(cfgPath))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return cur
+	}
+	cfg, err := config.Load(filepath.Join(dir, rel))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: baseline-ref: config:", err)
+		return cur
+	}
+	if profile != "" {
+		cfg.Profile = profile
+	}
+	return cfg
 }
 
 // gitOut runs a git subcommand in dir and returns its trimmed stdout.

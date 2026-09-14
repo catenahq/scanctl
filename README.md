@@ -15,7 +15,7 @@ resale-restricted and runs only under the `full` profile (see Profiles).
 
 | Tool | License | Covers | Runs when |
 | --- | --- | --- | --- |
-| [trivy](https://github.com/aquasecurity/trivy) | Apache-2.0 | dep CVEs + secrets + IaC misconfig (one binary) | always (fs); also `image` per `images:` ref |
+| [trivy](https://github.com/aquasecurity/trivy) | Apache-2.0 | dep CVEs + secrets + IaC misconfig (one binary) | always (fs); also `image` per `images:` / `image_pins:` ref |
 | [osv-scanner](https://github.com/google/osv-scanner) | Apache-2.0 | dependency CVEs, all ecosystems | a lockfile exists |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | MIT | secrets across git history | always |
 | [gosec](https://github.com/securego/gosec) | Apache-2.0 | Go SAST (type-aware) | `go.mod` present |
@@ -149,6 +149,41 @@ their own fix. A failed baseline scan degrades to the full gate (stricter,
 never looser) with a warning. The reusable workflow passes
 `--baseline-ref origin/<base>` automatically on `pull_request` events
 (opt out with `no-baseline-ref: true`).
+
+### Image scanning: `images` and `image_pins`
+
+`images:` is a literal list of refs to scan with `trivy image` alongside the fs
+scan. `image_pins:` reads the ref out of the file that already declares it:
+
+```yaml
+image_pins:
+  - file: payload/engines/tier1/catalog.go
+    pattern: 'c\.\w+Image = "([^"]+)"'
+  - file: ansible/reconcile/roles/keycloak/defaults/main.yml
+    pattern: 'keycloak_image_tag: "([^"]+)"'
+    repo: quay.io/phasetwo/phasetwo-keycloak
+```
+
+Prefer the pin form. The tag a host runs is already declared somewhere, and a
+literal entry here is a second copy that agrees with the first only by hand.
+Each pattern needs exactly one capturing group and every match in the file is
+scanned, so one entry covers a file pinning several images. The group is a
+whole `<repo>:<tag>`, unless `repo:` is set -- then the group is the tag alone
+and the two are joined, which is how a role default that splits them has to be
+read. A pattern narrower than a bare `<repo>:<tag>` grep is deliberate: prose
+in a neighbouring comment matches that shape too.
+
+**A pin that matches nothing fails the run.** A moved file or a renamed
+variable would otherwise scan no image and still report a clean gate -- which
+is exactly how a repo can carry a green image-CVE gate that has not looked at
+an image in weeks.
+
+Pin files are read from the tree being scanned, so `--baseline-ref` resolves
+the merge-base's pins from its worktree: a bump PR is graded on the delta
+between the image it proposes and the image it replaces, and a CVE that
+survives the bump unchanged does not gate it. The baseline scan re-reads
+`scanctl.yml` from that worktree too, so a literal `images:` list rewinds with
+the branch the same way.
 
 ### External SARIF (CodeQL and friends)
 

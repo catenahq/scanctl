@@ -31,6 +31,34 @@ tools:
     enabled: true
     mode: report
 
+# Container images to scan with `trivy image`, on top of the fs scan. Only
+# repos that ship or pin images set either key; both may be used at once and
+# the refs are merged.
+#
+# `images` is a literal list. `image_pins` reads the ref out of the file that
+# already declares it, which is the form to prefer: the pin a host runs lives
+# in a catalog / role default / compose file, and a literal entry here is a
+# second copy of it that goes stale silently. Each pattern needs exactly one
+# capturing group, and every match in the file is scanned -- so one entry
+# covers a file pinning several images.
+#
+# The group is a whole `<repo>:<tag>` unless `repo:` is set, in which case the
+# group is the tag alone and the ref is `<repo>:<tag captured>`. That second
+# form is for files that split the two, like an Ansible role default whose
+# `_image:` line is a Jinja expression over a separate `_image_tag:` scalar.
+#
+# A pin that matches nothing FAILS the run. That is the point: a moved file or
+# a renamed variable would otherwise scan no image and still report clean.
+#
+# images:
+#   - ghcr.io/catenahq/some-app:1.2.3
+# image_pins:
+#   - file: payload/engines/tier1/catalog.go
+#     pattern: 'c\.\w+Image = "([^"]+)"'
+#   - file: ansible/reconcile/roles/keycloak/defaults/main.yml
+#     pattern: 'keycloak_image_tag: "([^"]+)"'
+#     repo: quay.io/phasetwo/phasetwo-keycloak
+
 # Directory names skipped during detection (matched anywhere in the tree).
 # Vendored + generated files are additionally skipped via go-enry, so this list
 # only needs project-specific extras.

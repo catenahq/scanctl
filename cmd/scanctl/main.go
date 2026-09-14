@@ -155,7 +155,7 @@ func runCmd(args []string) int {
 	// gate. A failed baseline scan degrades to the full gate (stricter, never
 	// looser) with a warning rather than failing the run.
 	if *baselineRef != "" {
-		set, sha, err := baselineRefSet(context.Background(), root, *baselineRef, cfg, lock)
+		set, sha, err := baselineRefSet(context.Background(), root, *baselineRef, *cfgPath, *profile, cfg, lock)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "warning: baseline-ref:", err)
 		} else if n := baseline.ApplyRoot(out.Report, set, absPath(root)); n > 0 {

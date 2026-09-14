@@ -68,6 +68,9 @@ type Config struct {
 	// Images are container refs to scan with trivy image (in addition to the fs
 	// scan). Empty = no image scan; only repos that ship images set this.
 	Images []string `yaml:"images"`
+	// ImagePins read the refs to scan out of the repo's own source files, so a
+	// pin is scanned where it is declared rather than copied into this config.
+	ImagePins []ImagePin `yaml:"image_pins"`
 	// License tunes the trivy-license pass.
 	License LicenseConfig `yaml:"license"`
 	// Upload targets the aggregation plane (P2/P3); empty = serverless (v1).
@@ -79,6 +82,39 @@ const (
 	ProfileSellable = "sellable"
 	ProfileFull     = "full"
 )
+
+// ImagePin locates container refs inside one of the repo's own files. The pin
+// a host actually runs already lives somewhere -- a Go catalog, an Ansible
+// role default, a compose file -- and a literal `images:` entry would be a
+// second copy of it, kept in step by hand and wrong the day it is not.
+//
+// Pattern needs exactly one capturing group. EVERY match in the file is
+// scanned, so one entry covers a file that pins several images. A pattern is
+// narrower than a bare `<repo>:<tag>` grep on purpose: prose in a nearby
+// comment matches that shape too, and the scan would then chase a ref no host
+// runs.
+//
+// Repo says what the captured group is. Empty (the usual case) means the group
+// is a whole `<repo>:<tag>`, as written by a Go catalog or a compose `image:`
+// line. Set, it means the group is the TAG alone and the ref is
+// `<Repo>:<group>` -- which is how an Ansible role default has to be read,
+// since it splits the two:
+//
+//	keycloak_image_tag: "26.6.4"
+//	keycloak_image: >-
+//	  {{ ('quay.io/phasetwo/phasetwo-keycloak:' ~ keycloak_image_tag) | ... }}
+//
+// The tag line is the one to match. Matching the `_image:` line resolves to
+// the literal Jinja expression instead.
+//
+// Because File is read from the tree being scanned, a --baseline-ref run
+// resolves the merge-base's pins from its worktree and the diff gate compares
+// the image this change proposes against the image it replaces.
+type ImagePin struct {
+	File    string `yaml:"file"`
+	Pattern string `yaml:"pattern"`
+	Repo    string `yaml:"repo"`
+}
 
 // GateConfig holds the global severity floor.
 type GateConfig struct {
@@ -176,6 +212,9 @@ func Load(path string) (Config, error) {
 	}
 	if fromFile.Images != nil {
 		cfg.Images = fromFile.Images
+	}
+	if fromFile.ImagePins != nil {
+		cfg.ImagePins = fromFile.ImagePins
 	}
 	if fromFile.License.Ignored != nil {
 		cfg.License = fromFile.License
