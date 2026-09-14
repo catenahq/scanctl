@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/catenahq/scanctl/internal/config"
+	"github.com/catenahq/scanctl/internal/detect"
 )
 
 // catalogGo is the shape the pins actually take in catena-admin's tier-1
@@ -184,6 +185,50 @@ func TestTrivyIgnoreFilePrefersTheYamlForm(t *testing.T) {
 func TestTrivyIgnoreFileIsEmptyWhenTheRepoHasNone(t *testing.T) {
 	if got := trivyIgnoreFile(t.TempDir()); got != "" {
 		t.Errorf("trivyIgnoreFile = %q, want empty so no --ignorefile is passed", got)
+	}
+}
+
+// One ignore file, one answer. Honouring it for images but not for the fs scan
+// would mean a suppression the operator wrote once takes effect in half the
+// run, with nothing in the output saying which half.
+func TestTheFsScanPassesTheSameIgnoreFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".trivyignore.yaml", "vulnerabilities:\n")
+
+	var trivy toolDef
+	for _, td := range registry {
+		if td.name == "trivy" {
+			trivy = td
+		}
+	}
+	args := trivy.invoke("trivy", root, "out.sarif", detect.Result{}).args
+
+	var got string
+	for i, a := range args {
+		if a == "--ignorefile" && i+1 < len(args) {
+			got = args[i+1]
+		}
+	}
+	if got != filepath.Join(root, ".trivyignore.yaml") {
+		t.Errorf("--ignorefile = %q, want the repo's ignore file", got)
+	}
+	if args[len(args)-1] != root {
+		t.Errorf("scan target moved off the end of the argv: %v", args)
+	}
+}
+
+func TestTheFsScanPassesNoIgnoreFileWhenThereIsNone(t *testing.T) {
+	var trivy toolDef
+	for _, td := range registry {
+		if td.name == "trivy" {
+			trivy = td
+		}
+	}
+	args := trivy.invoke("trivy", t.TempDir(), "out.sarif", detect.Result{}).args
+	for _, a := range args {
+		if a == "--ignorefile" {
+			t.Errorf("passed --ignorefile with no file to point it at: %v", args)
+		}
 	}
 }
 

@@ -195,13 +195,20 @@ ADDS has nothing to resolve at the merge base; that is a pin with no baseline,
 so all of its findings gate.
 
 A repo's `.trivyignore.yaml` (or `.trivyignore.yml` / `.trivyignore`) at the
-scanned root is passed to the image scan as `--ignorefile`. trivy does not pick
-one up on its own here -- verified against 0.74, where a file sitting in the
+scanned root is passed to BOTH trivy passes as `--ignorefile`. trivy does not
+pick one up on its own -- verified against 0.74, where a file sitting in the
 working directory changed nothing until the flag named it -- so without this
 the suppressions a repo has already reviewed and time-boxed would not apply.
 It is read from the scanned root, so adding a suppression quiets both sides of
-the diff at once rather than reading as a newly fixed CVE. The **fs** scan does
-not yet do this; its ignore file is still unread.
+a `--baseline-ref` diff at once rather than reading as a newly fixed CVE.
+
+One file, one answer, on purpose: honouring it for images but not for the fs
+scan means a suppression the operator wrote once takes effect in half the run,
+with nothing in the output saying which half. The cost is that an entry
+justified for one context applies in the other, so a CVE id suppressed because
+an image vendors an unpatched copy also stops gating on a first-party
+dependency of the same id. Keep the entries time-boxed (`expiredAt`) and let
+the expiry check fail on a lapsed one, which is what bounds that.
 
 ### External SARIF (CodeQL and friends)
 

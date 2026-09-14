@@ -62,10 +62,18 @@ var registry = []toolDef{
 			// License scanning is intentionally omitted here: permissive-license
 			// notices are noise, and license *policy* is owned by Dependency-Track
 			// (P3), which reasons over the full SBOM rather than per-file matches.
-			return invocation{args: []string{
+			args := []string{
 				"fs", "--quiet", "--format", "sarif", "--output", out,
-				"--scanners", "vuln,misconfig,secret", "--ignore-unfixed", root,
-			}}
+				"--scanners", "vuln,misconfig,secret", "--ignore-unfixed",
+			}
+			// The same ignore file the image scan honours. trivy reads neither
+			// on its own, so without this a repo's suppressions apply to its
+			// images and not to its tree -- one file, two answers, and no way
+			// to tell from the output which half took effect.
+			if ign := trivyIgnoreFile(root); ign != "" {
+				args = append(args, "--ignorefile", ign)
+			}
+			return invocation{args: append(args, root)}
 		},
 	},
 	{
