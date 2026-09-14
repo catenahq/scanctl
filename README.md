@@ -185,6 +185,24 @@ survives the bump unchanged does not gate it. The baseline scan re-reads
 `scanctl.yml` from that worktree too, so a literal `images:` list rewinds with
 the branch the same way.
 
+Under `--baseline-ref`, only the pins whose FILE the change touches are
+scanned. An untouched pin resolves to the same ref on both sides, so scanning
+it twice can only produce findings that suppress each other -- and on a repo
+pinning nine images, proving that zero is most of a PR's runtime. Runs without
+`--baseline-ref` (push, cron) keep every pin and grade absolutely, which is
+where a CVE in an image nobody touched is meant to surface. A pin the change
+ADDS has nothing to resolve at the merge base; that is a pin with no baseline,
+so all of its findings gate.
+
+A repo's `.trivyignore.yaml` (or `.trivyignore.yml` / `.trivyignore`) at the
+scanned root is passed to the image scan as `--ignorefile`. trivy does not pick
+one up on its own here -- verified against 0.74, where a file sitting in the
+working directory changed nothing until the flag named it -- so without this
+the suppressions a repo has already reviewed and time-boxed would not apply.
+It is read from the scanned root, so adding a suppression quiets both sides of
+the diff at once rather than reading as a newly fixed CVE. The **fs** scan does
+not yet do this; its ignore file is still unread.
+
 ### External SARIF (CodeQL and friends)
 
 `--import <sarif>` (repeatable) folds an externally-produced SARIF into the merge

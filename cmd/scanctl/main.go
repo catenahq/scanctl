@@ -128,6 +128,21 @@ func runCmd(args []string) int {
 		return 2
 	}
 
+	// Resolved BEFORE the scan below, not just before the baseline: knowing
+	// what the change touches is what lets the image pins be narrowed to it,
+	// and both sides of the diff have to be narrowed the same way or the
+	// baseline stops lining up with the report it is suppressing against.
+	baseSha := ""
+	if *baselineRef != "" {
+		sha, err := mergeBase(context.Background(), root, *baselineRef)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "warning: baseline-ref:", err)
+		} else {
+			baseSha = sha
+			cfg = scopeImagePins(context.Background(), cfg, root, sha)
+		}
+	}
+
 	out, err := runner.Run(context.Background(), root, cfg, lock)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "run:", err)
@@ -154,12 +169,12 @@ func runCmd(args []string) int {
 	// there are marked suppressed so only findings this change INTRODUCES can
 	// gate. A failed baseline scan degrades to the full gate (stricter, never
 	// looser) with a warning rather than failing the run.
-	if *baselineRef != "" {
-		set, sha, err := baselineRefSet(context.Background(), root, *baselineRef, *cfgPath, *profile, cfg, lock)
+	if baseSha != "" {
+		set, err := baselineRefSet(context.Background(), root, baseSha, *cfgPath, *profile, cfg, lock)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "warning: baseline-ref:", err)
 		} else if n := baseline.ApplyRoot(out.Report, set, absPath(root)); n > 0 {
-			fmt.Printf("baseline-ref: suppressed %d finding(s) already present at %.12s\n", n, sha)
+			fmt.Printf("baseline-ref: suppressed %d finding(s) already present at %.12s\n", n, baseSha)
 		}
 	}
 

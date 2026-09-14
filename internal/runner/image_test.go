@@ -158,6 +158,35 @@ func TestResolveImageRefsComposesRepoWithACapturedTag(t *testing.T) {
 	}
 }
 
+// trivy does not read a repo's ignore file on its own for an image scan, so
+// the suppressions an operator has already reviewed and time-boxed only apply
+// when the scan is told where they live.
+func TestTrivyIgnoreFileIsFoundInTheScannedRoot(t *testing.T) {
+	for _, name := range []string{".trivyignore.yaml", ".trivyignore.yml", ".trivyignore"} {
+		root := t.TempDir()
+		writeFile(t, root, name, "vulnerabilities:\n")
+		got := trivyIgnoreFile(root)
+		if got != filepath.Join(root, name) {
+			t.Errorf("trivyIgnoreFile = %q, want the %s in the root", got, name)
+		}
+	}
+}
+
+func TestTrivyIgnoreFilePrefersTheYamlForm(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".trivyignore", "CVE-1\n")
+	writeFile(t, root, ".trivyignore.yaml", "vulnerabilities:\n")
+	if got := trivyIgnoreFile(root); got != filepath.Join(root, ".trivyignore.yaml") {
+		t.Errorf("trivyIgnoreFile = %q, want the .yaml form (it carries the expiredAt entries)", got)
+	}
+}
+
+func TestTrivyIgnoreFileIsEmptyWhenTheRepoHasNone(t *testing.T) {
+	if got := trivyIgnoreFile(t.TempDir()); got != "" {
+		t.Errorf("trivyIgnoreFile = %q, want empty so no --ignorefile is passed", got)
+	}
+}
+
 // Pin files are read from the tree being scanned, which is what makes a
 // --baseline-ref run resolve the merge-base's pins from its worktree instead
 // of re-reading HEAD's.

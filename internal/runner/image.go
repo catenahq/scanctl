@@ -50,6 +50,8 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 		return nil
 	}
 
+	ignore := trivyIgnoreFile(root)
+
 	ran := false
 	for _, ref := range refs {
 		outFile, err := os.CreateTemp("", "scanctl-trivy-image-*.sarif")
@@ -59,10 +61,15 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 		}
 		outPath := outFile.Name()
 		_ = outFile.Close()
+		args := []string{"image", "--quiet", "--format", "sarif",
+			"--ignore-unfixed", "--output", outPath}
+		if ignore != "" {
+			args = append(args, "--ignorefile", ignore)
+		}
+		args = append(args, ref)
 		// #nosec G204 -- bin is the pinned trivy; ref comes from the operator's
 		// scanctl.yml or from a pin pattern it declares over the repo's own files
-		cmd := exec.CommandContext(ctx, bin, "image", "--quiet", "--format", "sarif",
-			"--ignore-unfixed", "--output", outPath, ref)
+		cmd := exec.CommandContext(ctx, bin, args...)
 		if mergeSARIFRun("trivy", cmd, outPath, false, out) {
 			ran = true
 		}
@@ -72,6 +79,26 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 		out.Ran = append(out.Ran, "trivy-image")
 	}
 	return nil
+}
+
+// trivyIgnoreFile returns the repo's trivy ignore file, or "" when it has
+// none. Named explicitly because trivy does NOT pick one up on its own for an
+// image scan: against 0.74 a .trivyignore.yaml sitting in the working
+// directory changed nothing until --ignorefile pointed at it. Left implicit,
+// a repo's reviewed and time-boxed suppressions would silently not apply and
+// the image gate would re-report every CVE the operator has already triaged.
+//
+// Read from the scanned root, so a --baseline-ref run applies the base
+// branch's suppression list to the base branch's images. Adding a suppression
+// therefore quiets both sides at once rather than reading as a fixed CVE.
+func trivyIgnoreFile(root string) string {
+	for _, name := range []string{".trivyignore.yaml", ".trivyignore.yml", ".trivyignore"} {
+		p := filepath.Join(root, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 // resolveImageRefs is cfg.Images plus every ref matched by cfg.ImagePins,
@@ -94,7 +121,7 @@ func resolveImageRefs(cfg config.Config, root string) ([]string, error) {
 		add(ref)
 	}
 	for _, pin := range cfg.ImagePins {
-		found, err := matchImagePin(pin, root)
+		found, err := ResolveImagePin(pin, root)
 		if err != nil {
 			return nil, err
 		}
@@ -106,10 +133,10 @@ func resolveImageRefs(cfg config.Config, root string) ([]string, error) {
 	return refs, nil
 }
 
-// matchImagePin returns every ref pin.Pattern captures in pin.File. An empty
+// ResolveImagePin returns every ref pin.Pattern captures in pin.File. An empty
 // result is an error, not an empty list: a pin that matches nothing is the
 // exact shape of an image that stopped being scanned without anyone noticing.
-func matchImagePin(pin config.ImagePin, root string) ([]string, error) {
+func ResolveImagePin(pin config.ImagePin, root string) ([]string, error) {
 	if pin.File == "" || pin.Pattern == "" {
 		return nil, fmt.Errorf("image_pins: an entry needs both file and pattern (got file=%q pattern=%q)", pin.File, pin.Pattern)
 	}
