@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/catenahq/scanctl/internal/config"
+	"github.com/catenahq/scanctl/internal/sarif"
 )
 
 // imageStep scans each container image ref in cfg.Images -- plus every ref
@@ -70,8 +71,10 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 		// #nosec G204 -- bin is the pinned trivy; ref comes from the operator's
 		// scanctl.yml or from a pin pattern it declares over the repo's own files
 		cmd := exec.CommandContext(ctx, bin, args...)
+		merged := len(out.Report.Runs)
 		if mergeSARIFRun("trivy", cmd, outPath, false, out) {
 			ran = true
+			tagImage(out.Report.Runs[merged:], ref)
 		}
 		_ = os.Remove(outPath)
 	}
@@ -79,6 +82,22 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 		out.Ran = append(out.Ran, "trivy-image")
 	}
 	return nil
+}
+
+// tagImage records on every result which image it came from. trivy's location
+// is a path inside the image, which neither names the image nor stays put
+// across a bump (a jar is named for its version), so this property is what
+// matches a finding to the same image on both sides of a diff.
+func tagImage(runs []sarif.Run, ref string) {
+	for i := range runs {
+		for j := range runs[i].Results {
+			r := &runs[i].Results[j]
+			if r.Properties == nil {
+				r.Properties = map[string]any{}
+			}
+			r.Properties[sarif.ImageProperty] = ref
+		}
+	}
 }
 
 // trivyIgnoreFile returns the repo's trivy ignore file, or "" when it has

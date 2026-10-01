@@ -14,10 +14,10 @@ import (
 )
 
 // baselineRefSet scans the merge-base of HEAD and ref in a temporary git
-// worktree and returns its findings' fingerprint set plus the merge-base sha.
-// Used on pull_request CI so only findings the PR INTRODUCES gate: everything
-// already present on the base branch is suppressed (kind: external), while
-// push/cron runs (no -baseline-ref) keep the full gate.
+// worktree and returns its findings' fingerprint set. Everything already
+// present there is suppressed (kind: external), so only findings the change
+// INTRODUCES gate. CI passes the pull request's target branch, or on a push the
+// commit the branch held before it.
 //
 // cfgPath and profile are what main parsed, so the baseline scan can re-read
 // the config from the worktree: settings that name things OUTSIDE the tree --
@@ -72,9 +72,8 @@ func mergeBase(ctx context.Context, root, ref string) (string, error) {
 // scanning it twice can only produce findings that suppress each other.
 // Dropping it does not weaken the gate; it declines to pull and scan an image
 // twice to prove a zero, which on a repo pinning nine of them is most of a
-// PR's runtime. A run without -baseline-ref (push, cron) keeps every pin and
-// grades absolutely, and that is where debt in an image nobody touched is
-// meant to surface.
+// run. A run without -baseline-ref keeps every pin, which is how a scheduled
+// run reports the CVEs in an image nobody touched.
 //
 // Compared against the WORKING TREE rather than HEAD, because the working tree
 // is what the scan actually reads: an uncommitted edit to a pin file would

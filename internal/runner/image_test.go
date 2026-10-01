@@ -8,6 +8,7 @@ import (
 
 	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/detect"
+	"github.com/catenahq/scanctl/internal/sarif"
 )
 
 // catalogGo is the shape the pins actually take in catena-admin's tier-1
@@ -229,6 +230,22 @@ func TestTheFsScanPassesNoIgnoreFileWhenThereIsNone(t *testing.T) {
 		if a == "--ignorefile" {
 			t.Errorf("passed --ignorefile with no file to point it at: %v", args)
 		}
+	}
+}
+
+func TestTagImageNamesTheImageOnEveryResult(t *testing.T) {
+	runs := []sarif.Run{{Results: []sarif.Result{
+		{RuleID: "CVE-1"},
+		{RuleID: "CVE-2", Properties: map[string]any{"k": "v"}},
+	}}}
+	tagImage(runs, "postgres:18.6-alpine")
+	for _, r := range runs[0].Results {
+		if r.Properties[sarif.ImageProperty] != "postgres:18.6-alpine" {
+			t.Errorf("%s: image = %v, want postgres:18.6-alpine", r.RuleID, r.Properties[sarif.ImageProperty])
+		}
+	}
+	if runs[0].Results[1].Properties["k"] != "v" {
+		t.Error("tagging dropped a property the scanner set")
 	}
 }
 

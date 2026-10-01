@@ -70,8 +70,8 @@ org does, since the runner's own `PATH` isn't guaranteed to include it). Pin
 scanctl run .                 # detect, scan, merge SARIF, gate
 scanctl run --no-gate .       # scan + report, always exit 0
 scanctl run --out out.sarif --summary summary.md ./subdir
-scanctl run --baseline .scanctl/baseline.sarif .   # only NEW findings gate
 scanctl run --baseline-ref origin/main .            # only findings new vs the merge-base gate
+scanctl run --baseline .scanctl/baseline.sarif .   # findings accepted for good never gate
 scanctl run --import codeql.sarif .                 # fold in external SARIF
 ```
 
@@ -83,14 +83,37 @@ over- or under-gating on a coarse error/warning. Config is optional
 ([`scanctl.example.yml`](scanctl.example.yml)); with no file, sensible defaults
 apply.
 
-### Baseline: gate only on new findings
+### Gating: only what the change adds
 
-`--baseline <sarif>` diffs the current run against a committed baseline. A
-finding already in the baseline is marked suppressed (`kind: external`) in the
-merged SARIF -- the gate skips it, and it stays in the SARIF for audit. This is
-the dedup that makes scanctl usable on a large repo without GitHub Advanced
-Security. Seed a baseline by committing a clean run's SARIF; a missing baseline
-file is a no-op. The reusable workflow exposes it as the `baseline` input.
+`--baseline-ref <git-ref>` also scans the merge-base of HEAD and the ref, in a
+temporary git worktree, and suppresses every finding it already has, so only
+findings the change INTRODUCES gate. Both sides are scanned in the same run
+with the same scanner versions and vulnerability database. A failed scan of
+the base degrades to the full gate (stricter, never looser) with a warning.
+
+The reusable workflow picks the ref from the event: a pull request diffs
+against `origin/<base>`, a push against the commit the branch held before it
+(or the default branch, when the push created the branch or that commit is not
+in the clone). A scheduled or manual run has no change to grade, so it scans
+and reports without gating; that is where a CVE published against code nobody
+touched surfaces. `no-baseline-ref: true` turns the diff off and gates on every
+finding.
+
+A dependency vulnerability (trivy, osv-scanner) is matched across the two
+scans by advisory, package, and where the package sits: the image repository
+for an image scan, the manifest or lockfile otherwise. The match ignores the
+installed version, so a bump that keeps an advisory in the same package keeps
+the finding, and a bump that adds an advisory adds one. Every other finding is matched
+on tool, rule, file, and message, with checkout paths and line numbers
+normalized away.
+
+### Committed baseline (optional)
+
+`--baseline <sarif>` suppresses, on every run, the findings recorded in a
+committed SARIF: findings a human has reviewed and accepted for good. A finding
+in it is marked suppressed (`kind: external`) in the merged SARIF -- the gate
+skips it, and it stays in the SARIF for audit. A missing baseline file is a
+no-op. The reusable workflow exposes it as the `baseline` input.
 
 GitHub's code-scanning SARIF ingestion does **not** act on `kind: external`
 suppressions -- confirmed empirically (a baselined finding stays open on the
@@ -139,17 +162,6 @@ that split. Pair a committed baseline with a weekly no-baseline re-scan (a
 `.scanctl/drift-check.py` is a ready-made comparator (mirrors
 `internal/sarif.Fingerprint`).
 
-`--baseline-ref <git-ref>` is the committed-file-free variant for PR CI: the
-merge-base of HEAD and the ref is scanned in a temporary git worktree and its
-findings become the baseline, so only findings the change INTRODUCES gate. A
-CVE published overnight against a dependency the PR does not touch stops
-blocking every open PR; push/cron runs (no `--baseline-ref`) keep the full
-gate, so pre-existing findings still fail the default branch and surface for
-their own fix. A failed baseline scan degrades to the full gate (stricter,
-never looser) with a warning. The reusable workflow passes
-`--baseline-ref origin/<base>` automatically on `pull_request` events
-(opt out with `no-baseline-ref: true`).
-
 ### Image scanning: `images` and `image_pins`
 
 `images:` is a literal list of refs to scan with `trivy image` alongside the fs
@@ -179,18 +191,20 @@ is exactly how a repo can carry a green image-CVE gate that has not looked at
 an image in weeks.
 
 Pin files are read from the tree being scanned, so `--baseline-ref` resolves
-the merge-base's pins from its worktree: a bump PR is graded on the delta
-between the image it proposes and the image it replaces, and a CVE that
-survives the bump unchanged does not gate it. The baseline scan re-reads
+the merge-base's pins from its worktree: a bump is graded on the delta between
+the image it proposes and the image it replaces, and a CVE that survives the
+bump does not gate it, whatever version of the package now carries it. Each
+image-scan finding records its image ref in the `image` result property. The
+baseline scan re-reads
 `scanctl.yml` from that worktree too, so a literal `images:` list rewinds with
 the branch the same way.
 
 Under `--baseline-ref`, only the pins whose FILE the change touches are
 scanned. An untouched pin resolves to the same ref on both sides, so scanning
 it twice can only produce findings that suppress each other -- and on a repo
-pinning nine images, proving that zero is most of a PR's runtime. Runs without
-`--baseline-ref` (push, cron) keep every pin and grade absolutely, which is
-where a CVE in an image nobody touched is meant to surface. A pin the change
+pinning nine images, proving that zero is most of a run. A run without
+`--baseline-ref` keeps every pin, which is how the scheduled report covers an
+image nobody touched. A pin the change
 ADDS has nothing to resolve at the merge base; that is a pin with no baseline,
 so all of its findings gate.
 
@@ -258,7 +272,7 @@ internal/sarif    minimal SARIF 2.1.0 types (+ suppressions, properties,
                   fingerprints, security-severity)
 internal/report   merged SARIF writer + markdown summary
 internal/gate     security-severity / level floor -> exit code
-internal/baseline diff against a committed baseline (suppress known findings)
+internal/baseline fingerprint diff (base-commit scan or committed baseline)
 tools.lock        pinned scanner versions (Renovate-managed, embedded)
 ```
 

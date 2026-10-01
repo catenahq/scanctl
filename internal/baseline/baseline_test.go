@@ -149,6 +149,36 @@ func TestRootNormalizationStripsMessagePaths(t *testing.T) {
 	}
 }
 
+// The catena-ce oauth2-proxy bump PR, end to end: the advisory both images
+// carry is suppressed, and the one only the new image carries still gates.
+func TestABumpGatesOnlyOnTheAdvisoriesItAdds(t *testing.T) {
+	vuln := func(cve, pkg, version, image string) sarif.Run {
+		r := mk("trivy", cve, "oauth2-proxy/oauth2-proxy", 1)
+		r.Results[0].Message.Text = "Package: " + pkg + "\nInstalled Version: " + version +
+			"\nVulnerability " + cve + "\nSeverity: HIGH"
+		r.Results[0].Properties = map[string]any{sarif.ImageProperty: image}
+		return r
+	}
+	const before = "quay.io/oauth2-proxy/oauth2-proxy:v7.14.3-alpine"
+	const after = "quay.io/oauth2-proxy/oauth2-proxy:v7.15.4-alpine"
+	base := FromReport(&sarif.Report{Runs: []sarif.Run{
+		vuln("CVE-2026-14456", "libssl3", "3.5.5-r0", before),
+	}}, "/wt")
+	cur := &sarif.Report{Runs: []sarif.Run{
+		vuln("CVE-2026-14456", "libssl3", "3.5.7-r0", after),
+		vuln("CVE-2026-99999", "libssl3", "3.5.7-r0", after),
+	}}
+	if n := ApplyRoot(cur, base, "/repo"); n != 1 {
+		t.Fatalf("suppressed = %d, want 1", n)
+	}
+	if !cur.Runs[0].Results[0].Suppressed() {
+		t.Error("the advisory the old image already carried gated the bump")
+	}
+	if cur.Runs[1].Results[0].Suppressed() {
+		t.Error("the advisory the bump adds must keep gating")
+	}
+}
+
 func TestLoadMissingFileIsEmptySet(t *testing.T) {
 	s, err := Load("/nonexistent/baseline.sarif")
 	if err != nil {

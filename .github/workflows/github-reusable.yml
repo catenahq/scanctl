@@ -3,6 +3,8 @@ name: scanctl
 # Reusable workflow: drop one call into any repo to run the scanctl bundle.
 # scanctl is fetched with `go install` (tools.lock is embedded, so the scanner
 # pins travel with it); the scanners themselves are lazy-fetched at scan time.
+# A pull_request or push run gates only on the findings the change adds; a
+# scheduled or manual run reports (see "Pick the commit to diff against").
 #
 # Caller example:
 #   jobs:
@@ -10,7 +12,7 @@ name: scanctl
 #       uses: catenahq/scanctl/.github/workflows/github-reusable.yml@main
 #       with:
 #         scanctl-version: v0.1.0
-#         # baseline: .scanctl/baseline.sarif   # only new findings gate
+#         # baseline: .scanctl/baseline.sarif   # optional: findings accepted for good
 #       permissions:
 #         contents: read
 #         security-events: write   # code-scanning upload (public / GHAS only)
@@ -28,7 +30,7 @@ on:
         type: string
         default: "."
       no-gate:
-        description: scan + report but never fail the build
+        description: scan + report but never fail the build (schedule and workflow_dispatch runs always report only)
         type: boolean
         default: false
       profile:
@@ -36,7 +38,7 @@ on:
         type: string
         default: ""
       baseline:
-        description: path to a committed baseline SARIF; findings already in it are suppressed so only new findings gate (missing file = no-op)
+        description: optional committed baseline SARIF of findings accepted for good; they are suppressed on every run, on top of the diff gate (missing file = no-op)
         type: string
         default: ""
       dismiss-baseline:
@@ -44,7 +46,7 @@ on:
         type: boolean
         default: true
       no-baseline-ref:
-        description: disable the automatic merge-base diff gate on pull_request events (by default PR runs pass --baseline-ref origin/<base> so only findings the PR introduces gate; push/cron runs always keep the full gate)
+        description: disable the diff gate, so every finding gates (by default a pull_request run diffs against origin/<base> and a push run against the commit the branch held before the push, and only findings the change introduces gate)
         type: boolean
         default: false
       import-sarif:
@@ -84,24 +86,47 @@ jobs:
           # install a scanctl OLDER than the workflow that invokes it.
           GOPRIVATE: github.com/catenahq/*
         run: go install "github.com/catenahq/scanctl/cmd/scanctl@${SCANCTL_VERSION}"
+      - name: Pick the commit to diff against
+        # The gate's question is "does this change add a finding?": the commit
+        # before the change is scanned too, and only findings it does not have
+        # gate. A pull_request is compared with its target branch, a push with
+        # the commit the branch held before it. A push that created the branch,
+        # or force-pushed past a commit this clone does not have, is compared
+        # with the default branch. A scheduled or manual run has no change to
+        # grade, so it scans and reports without gating.
+        id: base
+        env:
+          EVENT: ${{ github.event_name }}
+          NO_BASELINE_REF: ${{ inputs.no-baseline-ref }}
+          PR_BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          ref=""
+          case "$EVENT" in
+            pull_request) ref="origin/$PR_BASE" ;;
+            push)
+              if [ -n "$BEFORE" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+                ref="$BEFORE"
+              else
+                ref="origin/$DEFAULT_BRANCH"
+              fi
+              ;;
+          esac
+          if [ "$NO_BASELINE_REF" = "true" ]; then ref=""; fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - name: Run scanctl
         env:
           # zizmor's API-backed audits use this when present; absent = it runs --offline.
           GH_TOKEN: ${{ github.token }}
           # Inputs routed through env vars, not interpolated into the run: script
           # (zizmor template-injection: untrusted-context-into-shell sink).
-          NO_GATE: ${{ inputs.no-gate }}
+          NO_GATE: ${{ inputs.no-gate || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           PROFILE: ${{ inputs.profile }}
           SCAN_PATH: ${{ inputs.path }}
           BASELINE: ${{ inputs.baseline }}
           DISMISS_BASELINE: ${{ inputs.dismiss-baseline }}
-          # On pull_request, diff-gate against the merge-base with the target
-          # branch: only findings the PR introduces gate; pre-existing repo
-          # findings (a CVE published against a dep the PR does not touch) are
-          # suppressed instead of blocking every open PR. push/cron runs keep
-          # the full gate, so pre-existing findings still fail the default
-          # branch and surface for their own fix.
-          BASELINE_REF: ${{ github.event_name == 'pull_request' && !inputs.no-baseline-ref && format('origin/{0}', github.base_ref) || '' }}
+          BASELINE_REF: ${{ steps.base.outputs.ref }}
           IMPORT_SARIF: ${{ inputs.import-sarif }}
         run: |
           gate_flag=""

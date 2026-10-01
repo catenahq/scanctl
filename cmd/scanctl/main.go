@@ -67,8 +67,8 @@ run flags:
   -out string      merged SARIF output path (default "scanctl.sarif")
   -summary string  markdown summary output path (default: stdout only)
   -sbom string     write a CycloneDX SBOM to this path (syft)
-  -baseline string baseline SARIF; findings already in it are suppressed so only
-                   new findings gate (missing file = no-op)
+  -baseline string optional SARIF of findings accepted for good; they are
+                   suppressed on every run (missing file = no-op)
   -dismiss-baseline
                    also close the matching GitHub code-scanning alert for every
                    -baseline-suppressed finding (GitHub does not act on SARIF
@@ -76,9 +76,10 @@ run flags:
                    GH_TOKEN/GITHUB_TOKEN (set by Actions); a no-op elsewhere.
                    Ignored unless -baseline is also set.
   -baseline-ref string
-                   git ref (e.g. origin/main); the merge-base of HEAD and it is
-                   scanned in a temp worktree and its findings are suppressed,
-                   so only findings introduced since the base gate (PR CI use)
+                   git ref (e.g. origin/main, or the commit before a push); the
+                   merge-base of HEAD and it is scanned in a temp worktree and
+                   its findings are suppressed, so only findings the change
+                   introduces gate
   -import string   fold an external SARIF file (e.g. CodeQL) into the merge;
                    repeatable
   -no-gate         scan and report but always exit 0
@@ -178,8 +179,8 @@ func runCmd(args []string) int {
 		}
 	}
 
-	// Diff against a committed baseline: findings already in it are marked
-	// suppressed (kind: external) so only NEW findings can gate.
+	// Findings accepted for good in a committed baseline are marked suppressed
+	// (kind: external) on every run.
 	if *baselinePath != "" {
 		base, err := baseline.Load(*baselinePath)
 		if err != nil {

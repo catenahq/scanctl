@@ -119,16 +119,90 @@ type Suppression struct {
 func (r Result) Suppressed() bool { return len(r.Suppressions) > 0 }
 
 // Fingerprint returns a stable identifier for a finding, used by baseline diff.
-// It prefers the SARIF partialFingerprints primary-location hash and otherwise
-// synthesizes one from tool + rule + primary location + message. The same
-// function is applied to baseline and current findings, so the two shapes never
-// need to agree -- only be self-consistent.
+// A dependency vulnerability is identified by what it is (see vulnIdentity).
+// Any other finding prefers the SARIF partialFingerprints primary-location hash
+// and otherwise synthesizes one from tool + rule + primary location + message.
+// The same function is applied to baseline and current findings, so the two
+// shapes never need to agree -- only be self-consistent.
 func Fingerprint(tool string, r Result) string {
+	if id, ok := vulnIdentity(tool, r); ok {
+		sum := sha256.Sum256([]byte(id))
+		return hex.EncodeToString(sum[:])
+	}
 	if h := r.PartialFingerprints["primaryLocationLineHash"]; h != "" {
 		return tool + ":" + r.RuleID + ":" + h
 	}
 	sum := sha256.Sum256([]byte(tool + "\x00" + r.RuleID + "\x00" + r.primaryLoc() + "\x00" + r.Message.Text))
 	return hex.EncodeToString(sum[:])
+}
+
+// ImageProperty is the result property naming the container image an image-scan
+// finding came from (the full ref, tag included).
+const ImageProperty = "image"
+
+// vulnIdentity names a dependency vulnerability by advisory, package, and where
+// the package sits: the image repository for an image-scan finding, the
+// manifest or lockfile otherwise. The installed version is left out. An image or
+// lockfile bump that still ships the same advisory in the same package carries
+// the same vulnerability, and both the message text and an in-image path (a jar
+// named for its version) change with the version.
+func vulnIdentity(tool string, r Result) (string, bool) {
+	pkg, ok := vulnPackage(tool, r.Message.Text)
+	if !ok {
+		return "", false
+	}
+	where := ""
+	if len(r.Locations) > 0 {
+		where = r.Locations[0].PhysicalLocation.ArtifactLocation.URI
+	}
+	if img, ok := r.Properties[ImageProperty].(string); ok && img != "" {
+		where = "image:" + ImageRepo(img)
+	}
+	return tool + "\x00" + r.RuleID + "\x00" + pkg + "\x00" + where, true
+}
+
+// vulnPackage reads the vulnerable package's name out of a trivy or osv-scanner
+// vulnerability message:
+//
+//	trivy:       "Package: libssl3\nInstalled Version: 3.5.7-r0\n..."
+//	osv-scanner: "Package 'golang.org/x/net@0.20.0' is vulnerable to 'CVE-...' ..."
+func vulnPackage(tool, msg string) (string, bool) {
+	switch tool {
+	case "trivy":
+		first, rest, ok := strings.Cut(msg, "\n")
+		if !ok || !strings.HasPrefix(rest, "Installed Version: ") {
+			return "", false
+		}
+		name, ok := strings.CutPrefix(first, "Package: ")
+		return name, ok && name != ""
+	case "osv-scanner":
+		rest, ok := strings.CutPrefix(msg, "Package '")
+		if !ok {
+			return "", false
+		}
+		spec, _, ok := strings.Cut(rest, "' is vulnerable to ")
+		if !ok {
+			return "", false
+		}
+		at := strings.LastIndex(spec, "@")
+		if at <= 0 {
+			return "", false
+		}
+		return spec[:at], true
+	}
+	return "", false
+}
+
+// ImageRepo is an image ref without its tag or digest: the name an image keeps
+// across a bump.
+func ImageRepo(ref string) string {
+	if at := strings.Index(ref, "@"); at >= 0 {
+		ref = ref[:at]
+	}
+	if c := strings.LastIndex(ref, ":"); c > strings.LastIndex(ref, "/") {
+		ref = ref[:c]
+	}
+	return ref
 }
 
 // primaryLoc renders the first physical location as "uri:line" (or "" when the
