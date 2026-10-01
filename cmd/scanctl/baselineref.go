@@ -12,12 +12,15 @@ import (
 	"github.com/catenahq/scanctl/internal/baseline"
 	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/runner"
+	"github.com/catenahq/scanctl/internal/sarif"
 )
 
-// baselineRefSet scans the merge-base of HEAD and ref in a temporary git
-// worktree and returns its findings' fingerprint set. Everything already
-// present there is suppressed (kind: external), so only findings the change
-// INTRODUCES gate. resolveBaseRef picks ref.
+// baselineRefSet scans the images pinned at the merge-base of HEAD and ref, in
+// a temporary git worktree, and returns their findings' fingerprint set. An
+// image finding already present there is suppressed (kind: external), so only
+// the image CVEs a change INTRODUCES gate. Only images are diffed: a finding in
+// the repo's own tree is fixable by a change to it, so it gates whether or not
+// it was already there. resolveBaseRef picks ref.
 //
 // cfgPath and profile are what main parsed, so the baseline scan can re-read
 // the config from the worktree: settings that name things OUTSIDE the tree --
@@ -44,7 +47,7 @@ func baselineRefSet(ctx context.Context, root, sha, cfgPath, profile string, cfg
 
 	base := worktreeConfig(cfgPath, profile, root, dir, cfg)
 	base = preresolveBasePins(base, dir)
-	out, err := runner.Run(ctx, dir, base, lock)
+	out, err := runner.ScanImages(ctx, dir, base, lock)
 	if err != nil {
 		return nil, fmt.Errorf("baseline scan: %w", err)
 	}
@@ -58,43 +61,54 @@ func baselineRefSet(ctx context.Context, root, sha, cfgPath, profile string, cfg
 }
 
 // resolveBaseRef decides what a run is compared against. An explicit
-// -baseline-ref wins, and "none" turns the diff off. Left empty inside GitHub
-// Actions, the ref is read from the event: a pull request is compared with its
-// target branch, a push with the commit the branch held before it, or with the
-// default branch when that commit is not in the clone (the push created the
-// branch, or force-pushed past it). A scheduled or manual run has no change to
-// grade, so it is compared with nothing and reportOnly is set. Outside Actions
-// an empty flag compares with nothing and gates on every finding.
-func resolveBaseRef(ctx context.Context, root, flag string) (ref string, reportOnly bool) {
-	switch flag {
-	case "none":
-		return "", false
-	case "":
-	default:
-		return flag, false
+// -baseline-ref wins. Left empty inside GitHub Actions, the ref is read from
+// the event: a pull request is compared with its target branch, a push with
+// the commit the branch held before it, or with the default branch when that
+// commit is not in the clone (the push created the branch, or force-pushed
+// past it). Any other run -- scheduled, manual, outside Actions -- grades no
+// change and is compared with nothing.
+func resolveBaseRef(ctx context.Context, root, flag string) string {
+	if flag != "" {
+		return flag
 	}
 	if os.Getenv("GITHUB_ACTIONS") != "true" {
-		return "", false
+		return ""
 	}
 	switch os.Getenv("GITHUB_EVENT_NAME") {
 	case "pull_request", "pull_request_target":
 		if base := os.Getenv("GITHUB_BASE_REF"); base != "" {
-			return "origin/" + base, false
+			return "origin/" + base
 		}
 	case "push":
 		ev := readPushEvent(os.Getenv("GITHUB_EVENT_PATH"))
 		if ev.Before != "" {
 			if _, err := gitOut(ctx, root, "cat-file", "-e", ev.Before+"^{commit}"); err == nil {
-				return ev.Before, false
+				return ev.Before
 			}
 		}
 		if ev.Repository.DefaultBranch != "" {
-			return "origin/" + ev.Repository.DefaultBranch, false
+			return "origin/" + ev.Repository.DefaultBranch
 		}
-	case "schedule", "workflow_dispatch":
-		return "", true
 	}
-	return "", false
+	return ""
+}
+
+// reportImageFindings marks every image-scan finding suppressed (kind:
+// external) on a run that grades no change: a CVE in a third-party image is
+// upstream's to fix, and with nothing changed this run introduced none of
+// them. They stay in the report and the SARIF. Returns how many it marked.
+func reportImageFindings(rep *sarif.Report) int {
+	n := 0
+	for ri := range rep.Runs {
+		for i := range rep.Runs[ri].Results {
+			r := &rep.Runs[ri].Results[i]
+			if _, ok := r.Properties[sarif.ImageProperty]; ok && !r.Suppressed() {
+				r.Suppressions = append(r.Suppressions, sarif.Suppression{Kind: "external", Justification: sarif.NoChange})
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // pushEvent is the part of a GitHub push event payload resolveBaseRef reads.
@@ -109,7 +123,7 @@ type pushEvent struct {
 // which resolves to no diff and the full gate.
 func readPushEvent(path string) pushEvent {
 	var ev pushEvent
-	if data, err := os.ReadFile(path); err == nil { // #nosec G304 -- GITHUB_EVENT_PATH, set by the Actions runner
+	if data, err := os.ReadFile(path); err == nil { // #nosec G304 G703 -- GITHUB_EVENT_PATH, set by the Actions runner
 		_ = json.Unmarshal(data, &ev)
 	}
 	return ev

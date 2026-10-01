@@ -179,12 +179,44 @@ func TestABumpGatesOnlyOnTheAdvisoriesItAdds(t *testing.T) {
 	}
 }
 
-func TestLoadMissingFileIsEmptySet(t *testing.T) {
-	s, err := Load("/nonexistent/baseline.sarif")
+func TestLoadReportOfAMissingFileIsNil(t *testing.T) {
+	rep, err := LoadReport("/nonexistent/baseline.sarif")
 	if err != nil {
 		t.Fatalf("missing baseline should not error: %v", err)
 	}
-	if len(s) != 0 {
-		t.Errorf("missing baseline set len = %d, want 0", len(s))
+	if rep != nil {
+		t.Errorf("missing baseline = %v, want nil", rep)
+	}
+}
+
+// An accepted finding that was fixed leaves its entry behind; the entry would
+// silently accept the finding again if it came back.
+func TestStaleNamesTheEntriesTheScanNoLongerProduces(t *testing.T) {
+	base := &sarif.Report{Runs: []sarif.Run{
+		mk("semgrep", "renovate-age", "renovate.json", 5),
+		mk("semgrep", "renovate-age", "renovate.json", 5),
+		mk("gosec", "G304", "a.go", 3),
+	}}
+	cur := &sarif.Report{Runs: []sarif.Run{
+		mk("semgrep", "renovate-age", "renovate.json", 5),
+	}}
+	stale := Stale(base, cur)
+	if len(stale) != 2 {
+		t.Fatalf("stale = %v, want the second renovate-age instance and the gosec entry", stale)
+	}
+	if stale[0].Tool != "semgrep" || stale[1].Tool != "gosec" {
+		t.Errorf("stale = %v", stale)
+	}
+}
+
+func TestApplyMarksTheBaselineAndTheDiffApart(t *testing.T) {
+	cur := &sarif.Report{Runs: []sarif.Run{mk("gosec", "G304", "/repo/a.go", 5), mk("gosec", "G401", "/repo/b.go", 9)}}
+	Apply(cur, fingerprints(&sarif.Report{Runs: []sarif.Run{mk("gosec", "G304", "/repo/a.go", 5)}}))
+	ApplyRoot(cur, FromReport(&sarif.Report{Runs: []sarif.Run{mk("gosec", "G401", "/wt/b.go", 9)}}, "/wt"), "/repo")
+	if got := cur.Runs[0].Results[0].Suppressions[0].Justification; got != sarif.AcceptedInBaseline {
+		t.Errorf("baseline justification = %q", got)
+	}
+	if got := cur.Runs[1].Results[0].Suppressions[0].Justification; got != sarif.PresentBefore {
+		t.Errorf("diff justification = %q", got)
 	}
 }

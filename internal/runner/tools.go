@@ -101,9 +101,14 @@ var registry = []toolDef{
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			args := []string{"detect", "--source", root, "--report-format", "sarif",
 				"--report-path", out, "--redact"}
-			// Scan full git history when root is a repo; otherwise scan files.
+			if cfg := gitleaksConfigPath(root); cfg != "" {
+				args = append(args, "--config", cfg)
+			}
+			// Scan the history of the commit being scanned when root is a
+			// repo; otherwise scan files. Other branches are scanned when they
+			// are pushed.
 			if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
-				args = append(args, "--log-opts=--all")
+				args = append(args, "--log-opts=HEAD")
 			} else {
 				args = append(args, "--no-git")
 			}

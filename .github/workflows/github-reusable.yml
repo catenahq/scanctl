@@ -3,8 +3,9 @@ name: scanctl
 # Reusable workflow: drop one call into any repo to run the scanctl bundle.
 # scanctl is fetched with `go install` (tools.lock is embedded, so the scanner
 # pins travel with it); the scanners themselves are lazy-fetched at scan time.
-# A pull_request or push run gates only on the findings the change adds; a
-# scheduled or manual run reports (scanctl reads which from the event).
+# Findings in the repo's own tree gate on every run. Image CVEs gate only when a
+# pull_request or push introduces them; scanctl reads the commit to compare
+# with from the event.
 #
 # Caller example:
 #   jobs:
@@ -30,7 +31,7 @@ on:
         type: string
         default: "."
       no-gate:
-        description: scan + report but never fail the build (schedule and workflow_dispatch runs always report only)
+        description: scan + report but never fail the build
         type: boolean
         default: false
       profile:
@@ -38,17 +39,13 @@ on:
         type: string
         default: ""
       baseline:
-        description: optional committed baseline SARIF of findings accepted for good; they are suppressed on every run, on top of the diff gate (missing file = no-op)
+        description: optional committed baseline SARIF of findings accepted for good; they are suppressed on every run, and an entry the scan no longer produces fails it (missing file = no-op)
         type: string
         default: ""
       dismiss-baseline:
-        description: also close the matching GitHub code-scanning alert for every -baseline-suppressed finding (GitHub does not act on SARIF "external" suppressions on its own). Only applies when baseline is set; always skipped on pull_request events.
+        description: also close the matching GitHub code-scanning alert for every finding the baseline accepted (GitHub does not act on SARIF "external" suppressions on its own). Only applies when baseline is set; always skipped on pull_request events.
         type: boolean
         default: true
-      no-baseline-ref:
-        description: disable the diff gate, so every finding gates (by default a pull_request run diffs against origin/<base> and a push run against the commit the branch held before the push, and only findings the change introduces gate)
-        type: boolean
-        default: false
       import-sarif:
         description: path to an externally-produced SARIF (e.g. a CodeQL job's output) to fold into the merge
         type: string
@@ -97,8 +94,6 @@ jobs:
           SCAN_PATH: ${{ inputs.path }}
           BASELINE: ${{ inputs.baseline }}
           DISMISS_BASELINE: ${{ inputs.dismiss-baseline }}
-          # Empty: scanctl reads the base from the event. "none": no diff.
-          BASELINE_REF: ${{ inputs.no-baseline-ref && 'none' || '' }}
           IMPORT_SARIF: ${{ inputs.import-sarif }}
         run: |
           gate_flag=""
@@ -109,11 +104,9 @@ jobs:
           if [ -n "$BASELINE" ]; then baseline_flag="--baseline $BASELINE"; fi
           dismiss_flag=""
           if [ -n "$BASELINE" ] && [ "$DISMISS_BASELINE" = "true" ]; then dismiss_flag="--dismiss-baseline"; fi
-          baseline_ref_flag=""
-          if [ -n "$BASELINE_REF" ]; then baseline_ref_flag="--baseline-ref $BASELINE_REF"; fi
           import_flag=""
           if [ -n "$IMPORT_SARIF" ]; then import_flag="--import $IMPORT_SARIF"; fi
-          "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag $baseline_flag $dismiss_flag $baseline_ref_flag $import_flag \
+          "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag $baseline_flag $dismiss_flag $import_flag \
             --out scanctl.sarif --sbom sbom.cdx.json \
             --summary scanctl-summary.md "$SCAN_PATH"
           cat scanctl-summary.md >> "$GITHUB_STEP_SUMMARY"

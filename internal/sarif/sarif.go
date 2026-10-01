@@ -108,10 +108,22 @@ type Result struct {
 }
 
 // Suppression marks a result the producing tool suppressed. Kind is "inSource"
-// (e.g. nosemgrep) or "external" (e.g. matched a scanctl baseline).
+// (e.g. nosemgrep) or "external" (scanctl's own); Justification says which of
+// scanctl's reasons applied (AcceptedInBaseline, PresentBefore, NoChange).
 type Suppression struct {
-	Kind string `json:"kind,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Justification string `json:"justification,omitempty"`
 }
+
+// Justifications scanctl records on its external suppressions.
+const (
+	// AcceptedInBaseline: listed in the committed baseline, accepted for good.
+	AcceptedInBaseline = "accepted in the committed scanctl baseline"
+	// PresentBefore: an image finding the commit before the change already had.
+	PresentBefore = "present before this change"
+	// NoChange: an image finding on a run that grades no change.
+	NoChange = "image finding on a run that grades no change"
+)
 
 // Suppressed reports whether this result is suppressed (in source or by a
 // baseline match). Suppressed findings are preserved in the output but never

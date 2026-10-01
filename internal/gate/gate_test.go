@@ -23,8 +23,9 @@ func baseCfg() config.Config {
 
 func TestReportModeNeverGates(t *testing.T) {
 	cfg := baseCfg()
-	// gitleaks defaults to report mode; even error-level findings must not gate.
-	rep := &sarif.Report{Runs: []sarif.Run{report("gitleaks", sarif.LevelError, 4)}}
+	cfg.Tools["gosec"] = config.ToolConfig{Enabled: true, Mode: config.ModeReport}
+	// A report-mode tool never gates, even on error-level findings.
+	rep := &sarif.Report{Runs: []sarif.Run{report("gosec", sarif.LevelError, 4)}}
 	v := Evaluate(rep, cfg)
 	if v.Failed() {
 		t.Errorf("report-mode tool should never gate; gating=%d", v.Gating)
@@ -102,6 +103,17 @@ func TestSuppressedFindingNeverGates(t *testing.T) {
 	}
 	if v.Total != 2 {
 		t.Errorf("total = %d, want 2 (suppressed still counted in total)", v.Total)
+	}
+}
+
+// gitleaks reports no severity. A secret is fixable by a change to the code
+// and blocks at any floor.
+func TestASecretGatesWhateverTheFloor(t *testing.T) {
+	cfg := baseCfg()
+	cfg.Gate.Floor = config.SevCritical
+	rep := &sarif.Report{Runs: []sarif.Run{report("gitleaks", "", 2)}}
+	if v := Evaluate(rep, cfg); v.Gating != 2 {
+		t.Errorf("gating = %d, want both secrets", v.Gating)
 	}
 }
 

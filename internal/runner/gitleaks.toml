@@ -1,0 +1,13 @@
+# Bundled gitleaks config: gitleaks' own rules, plus the allowlist below.
+title = "scanctl"
+
+[extend]
+useDefault = true
+
+# A version tag is never a credential. The generic-api-key rule keys on words
+# such as "auth", so an image reference like
+# quay.io/oauth2-proxy/oauth2-proxy:v7.15.4-alpine reads to it as a key whose
+# secret is the tag.
+[[allowlists]]
+description = "version tags"
+regexes = ['''^v?[0-9]+(\.[0-9]+)+([-+.][0-9A-Za-z.-]+)?$''']

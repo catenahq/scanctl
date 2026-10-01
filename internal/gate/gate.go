@@ -55,8 +55,12 @@ func cvssToSeverity(score float64) config.Severity {
 // severity" score (from the result's own properties, then its rule's) over the
 // coarse SARIF level. This makes the gate floor mean what it says: a MEDIUM CVE
 // a tool happens to emit at error-level no longer over-gates, and vice versa.
+// gitleaks reports no severity at all, and a committed secret is critical.
 // Exported so the report renders the same severity the gate decides on.
-func Severity(rules map[string]sarif.Rule, r sarif.Result) config.Severity {
+func Severity(tool string, rules map[string]sarif.Rule, r sarif.Result) config.Severity {
+	if tool == "gitleaks" {
+		return config.SevCritical
+	}
 	if score, ok := sarif.SecuritySeverity(r.Properties); ok {
 		return cvssToSeverity(score)
 	}
@@ -84,7 +88,7 @@ func Evaluate(rep *sarif.Report, cfg config.Config) Result {
 			if r.Suppressed() {
 				continue // suppressed (nosemgrep / baseline) never gates
 			}
-			if Severity(rules, r).Rank() >= floor {
+			if Severity(run.Tool.Driver.Name, rules, r).Rank() >= floor {
 				res.Gating++
 				res.ByTool[run.Tool.Driver.Name]++
 			}

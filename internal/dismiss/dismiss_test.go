@@ -20,7 +20,7 @@ func result(tool, rule, path string, line int, suppressed bool) sarif.Result {
 		}}},
 	}
 	if suppressed {
-		r.Suppressions = []sarif.Suppression{{Kind: "external"}}
+		r.Suppressions = []sarif.Suppression{{Kind: "external", Justification: sarif.AcceptedInBaseline}}
 	}
 	_ = tool
 	return r
@@ -100,6 +100,28 @@ func TestDismissNoOpWhenNothingSuppressed(t *testing.T) {
 	}
 	if called {
 		t.Error("should not call the API when nothing is baseline-suppressed")
+	}
+}
+
+// A finding the base commit already had is suppressed for the gate, but
+// nobody accepted it: its alert stays open.
+func TestDismissLeavesAFindingSuppressedOnlyByTheDiffOpen(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+	defer srv.Close()
+
+	for _, why := range []string{sarif.PresentBefore, sarif.NoChange} {
+		r := result("trivy", "CVE-2026-1", "oauth2-proxy/oauth2-proxy", 1, false)
+		r.Suppressions = []sarif.Suppression{{Kind: "external", Justification: why}}
+		c := Client{BaseURL: srv.URL, Owner: "o", Repo: "r", Token: "secret", HTTPClient: srv.Client()}
+		if n, err := c.Dismiss(context.Background(), report("trivy", r)); err != nil || n != 0 {
+			t.Errorf("%s: dismissed %d (err %v), want 0", why, n, err)
+		}
+	}
+	if called {
+		t.Error("called the alerts API for findings no baseline accepted")
 	}
 }
 

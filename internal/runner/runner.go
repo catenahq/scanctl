@@ -88,6 +88,16 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 	return out, nil
 }
 
+// ScanImages runs only the image scan of cfg's images and image pins under
+// root: the half of a run a base-commit diff compares.
+func ScanImages(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outcome, error) {
+	out := &Outcome{Report: sarif.New(), Skipped: map[string]string{}}
+	if err := imageStep(ctx, cfg, lock, root, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // runTool executes one scanner and parses its SARIF. A non-zero exit is NOT an
 // error by itself -- scanners signal "findings present" that way. The outcomes:
 //   - parseable report          -> findings (or zero) from the tool

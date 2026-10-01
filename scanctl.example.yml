@@ -12,8 +12,8 @@ gate:
   floor: high
 
 # Per-tool switches. mode "block" can fail the run; "report" only surfaces
-# findings. Defaults mirror catena-ce's split (deps/CVE block; SAST/secrets
-# report until the baseline is acknowledged, then promote to block).
+# findings. Every tool whose findings a change to the repo can fix blocks by
+# default; trivy-license reports.
 tools:
   osv-scanner:
     enabled: true
@@ -26,10 +26,10 @@ tools:
     mode: block
   gosec:
     enabled: true
-    mode: report
+    mode: block
   gitleaks:
     enabled: true
-    mode: report
+    mode: block
 
 # Container images to scan with `trivy image`, on top of the fs scan. Only
 # repos that ship or pin images set either key; both may be used at once and

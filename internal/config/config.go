@@ -152,14 +152,14 @@ type DependencyTrackConfig struct {
 	ProjectVersion string `yaml:"project_version"`
 }
 
-// Default returns the zero-config baseline: sellable profile, high floor, the
-// v1 core scanners enabled with the same block/report split catena-ce uses
-// today (osv/trivy/govulncheck block; gitleaks/gosec report until baselined).
-// zizmor blocks: a workflow-supply-chain finding is a security issue, not
-// advisory. Its only baseline false-positive -- unpinned first-party @main
-// reusable-workflow refs -- is exempted by the bundled zizmor policy
-// (catenahq/* may ref-pin; third-party must hash-pin; see runner/zizmor.go).
-// semgrep and guarddog stay report-mode like gosec/gitleaks until baselined.
+// Default returns the zero-config baseline: sellable profile, high floor, and
+// every scanner whose findings a change to the repo can fix in block mode --
+// dependency CVEs (osv, trivy, govulncheck), SAST (gosec, semgrep), secrets
+// (gitleaks), workflow supply chain (zizmor), malicious packages (guarddog).
+// zizmor's one known false positive, unpinned first-party @main
+// reusable-workflow refs, is exempted by the bundled policy (catenahq/* may
+// ref-pin; third-party must hash-pin; see runner/zizmor.go). trivy-license
+// reports: a copyleft license is a policy question, not a vulnerability.
 // semgrep is fullOnly, so it only actually runs under the "full" profile
 // (catena's internal scanctl.yml sets that).
 func Default() Config {
@@ -170,11 +170,11 @@ func Default() Config {
 			"osv-scanner":   {Enabled: true, Mode: ModeBlock},
 			"trivy":         {Enabled: true, Mode: ModeBlock},
 			"govulncheck":   {Enabled: true, Mode: ModeBlock},
-			"gosec":         {Enabled: true, Mode: ModeReport},
-			"gitleaks":      {Enabled: true, Mode: ModeReport},
-			"semgrep":       {Enabled: true, Mode: ModeReport},
+			"gosec":         {Enabled: true, Mode: ModeBlock},
+			"gitleaks":      {Enabled: true, Mode: ModeBlock},
+			"semgrep":       {Enabled: true, Mode: ModeBlock},
 			"zizmor":        {Enabled: true, Mode: ModeBlock},
-			"guarddog":      {Enabled: true, Mode: ModeReport},
+			"guarddog":      {Enabled: true, Mode: ModeBlock},
 			"trivy-license": {Enabled: true, Mode: ModeReport},
 		},
 		Ignore: []string{".git", "vendor", "node_modules", "testdata", ".venv"},

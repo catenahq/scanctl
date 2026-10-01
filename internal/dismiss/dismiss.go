@@ -1,5 +1,5 @@
-// Package dismiss closes GitHub code-scanning alerts that scanctl's baseline
-// diff marked suppressed (kind "external"). GitHub's SARIF ingestion honors
+// Package dismiss closes GitHub code-scanning alerts for the findings the
+// committed scanctl baseline accepted. GitHub's SARIF ingestion honors
 // in-source suppressions (e.g. a semgrep nosemgrep comment) and shows them
 // dismissed on upload, but does NOT act on externally-asserted suppressions --
 // confirmed empirically: a finding present in a committed .scanctl/baseline.sarif
@@ -84,7 +84,7 @@ func (c Client) Dismiss(ctx context.Context, rep *sarif.Report) (int, error) {
 	for _, run := range rep.Runs {
 		tool := run.Tool.Driver.Name
 		for _, r := range run.Results {
-			if !externallySuppressed(r) || len(r.Locations) == 0 {
+			if !acceptedInBaseline(r) || len(r.Locations) == 0 {
 				continue
 			}
 			pl := r.Locations[0].PhysicalLocation
@@ -118,9 +118,12 @@ func (c Client) Dismiss(ctx context.Context, rep *sarif.Report) (int, error) {
 	return n, nil
 }
 
-func externallySuppressed(r sarif.Result) bool {
+// acceptedInBaseline reports whether the committed baseline suppressed r. A
+// finding suppressed only because the commit before the change already had it
+// is still open: closing its alert would record a decision nobody made.
+func acceptedInBaseline(r sarif.Result) bool {
 	for _, s := range r.Suppressions {
-		if s.Kind == "external" {
+		if s.Kind == "external" && s.Justification == sarif.AcceptedInBaseline {
 			return true
 		}
 	}

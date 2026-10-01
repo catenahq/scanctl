@@ -17,7 +17,7 @@ resale-restricted and runs only under the `full` profile (see Profiles).
 | --- | --- | --- | --- |
 | [trivy](https://github.com/aquasecurity/trivy) | Apache-2.0 | dep CVEs + secrets + IaC misconfig (one binary) | always (fs); also `image` per `images:` / `image_pins:` ref |
 | [osv-scanner](https://github.com/google/osv-scanner) | Apache-2.0 | dependency CVEs, all ecosystems | a lockfile exists |
-| [gitleaks](https://github.com/gitleaks/gitleaks) | MIT | secrets across git history | always |
+| [gitleaks](https://github.com/gitleaks/gitleaks) | MIT | secrets in the scanned commit's history | always |
 | [gosec](https://github.com/securego/gosec) | Apache-2.0 | Go SAST (type-aware) | `go.mod` present |
 | [govulncheck](https://golang.org/x/vuln) | BSD-3 | reachability-aware Go vulns | `go.mod` present |
 | [zizmor](https://github.com/zizmorcore/zizmor) | MIT/Apache-2.0 | GitHub Actions workflow audit | `.github/workflows/*.y{a,}ml` present |
@@ -38,6 +38,12 @@ third-party `uses:` must be hash-pinned. This lets the reusable security workflo
 stay at `@main` (auto-updating, guarded by branch protection on the scanctl repo
 rather than a per-caller digest pin) while still gating on unpinned third-party
 actions and every other high-severity workflow finding.
+
+gitleaks scans the history of the commit being scanned, with a bundled config
+([`internal/runner/gitleaks.toml`](internal/runner/gitleaks.toml)): gitleaks'
+own rules plus an allowlist for version tags, which its generic-api-key rule
+reads as secrets after a name containing "auth" (an `oauth2-proxy` image tag).
+A repo's own `.gitleaks.toml` takes its place.
 
 GuardDog's SARIF comes from its manifest-based `verify` subcommand, so it scans
 only a root `requirements.txt` (PyPI), `package-lock.json` (npm), or `go.mod`
@@ -70,7 +76,7 @@ org does, since the runner's own `PATH` isn't guaranteed to include it). Pin
 scanctl run .                 # detect, scan, merge SARIF, gate
 scanctl run --no-gate .       # scan + report, always exit 0
 scanctl run --out out.sarif --summary summary.md ./subdir
-scanctl run --baseline-ref origin/main .            # only findings new vs the merge-base gate
+scanctl run --baseline-ref origin/main .            # image CVEs gate only if new vs the merge-base
 scanctl run --baseline .scanctl/baseline.sarif .   # findings accepted for good never gate
 scanctl run --import codeql.sarif .                 # fold in external SARIF
 ```
@@ -79,43 +85,50 @@ Exit code is non-zero when a tool in `block` mode produces a finding at or above
 the configured gate floor. The floor is compared against each finding's CVSS
 `security-severity` when the tool reports one (the same score GitHub uses),
 falling back to the SARIF level -- so the floor means what it says rather than
-over- or under-gating on a coarse error/warning. Config is optional
+over- or under-gating on a coarse error/warning. gitleaks reports no severity;
+a committed secret is critical. Config is optional
 ([`scanctl.example.yml`](scanctl.example.yml)); with no file, sensible defaults
-apply.
+apply: every tool blocks except `trivy-license`.
 
-### Gating: only what the change adds
+### Gating: what a change to the repo can fix
 
-`--baseline-ref <git-ref>` also scans the merge-base of HEAD and the ref, in a
-temporary git worktree, and suppresses every finding it already has, so only
-findings the change INTRODUCES gate. Both sides are scanned in the same run
-with the same scanner versions and vulnerability database. A failed scan of
-the base degrades to the full gate (stricter, never looser) with a warning.
+A finding in the repo's own tree -- a dependency CVE in a manifest or lockfile,
+a SAST finding, a secret, a workflow or IaC finding, a malicious package --
+is fixable by a change to the repo, so it gates on every run, whether or not
+it was already there.
+
+A CVE in a third-party image the repo pins (`images:` / `image_pins:`) is
+upstream's to fix, so it gates only when a change introduces it.
+`--baseline-ref <git-ref>` also scans the images pinned at the merge-base of
+HEAD and the ref, in a temporary git worktree, and suppresses every image
+finding they already have. Both sides are scanned in the same run with the
+same scanner version and vulnerability database. A failed scan of the base
+degrades to the full gate (stricter, never looser) with a warning.
 
 Inside GitHub Actions, with no `--baseline-ref` given, scanctl reads the ref
 from the event: a pull request diffs against `origin/<base>`, a push against
 the commit the branch held before it (or the default branch, when the push
-created the branch or that commit is not in the clone). A scheduled or manual
-run has no change to grade, so it scans and reports without gating; that is
-where a CVE published against code nobody touched surfaces. Every caller, the
-reusable workflow or an inline `scanctl run`, gets the same behaviour.
-`--baseline-ref none` (the reusable workflow's `no-baseline-ref: true`) turns
-the diff off and gates on every finding, as does a run outside Actions.
+created the branch or that commit is not in the clone). A run with no ref --
+scheduled, manual, or outside Actions -- grades no change, so it reports every
+image finding without gating on it; that is where a CVE published against an
+image nobody touched surfaces. Every caller, the reusable workflow or an
+inline `scanctl run`, gets the same behaviour.
 
-A dependency vulnerability (trivy, osv-scanner) is matched across the two
-scans by advisory, package, and where the package sits: the image repository
-for an image scan, the manifest or lockfile otherwise. The match ignores the
-installed version, so a bump that keeps an advisory in the same package keeps
-the finding, and a bump that adds an advisory adds one. Every other finding is matched
-on tool, rule, file, and message, with checkout paths and line numbers
-normalized away.
+A dependency vulnerability in an image is matched across the two scans by
+advisory, package, and image repository. The match ignores the installed
+version, so a bump that keeps an advisory in the same package keeps the
+finding, and a bump that adds an advisory adds one.
 
 ### Committed baseline (optional)
 
 `--baseline <sarif>` suppresses, on every run, the findings recorded in a
 committed SARIF: findings a human has reviewed and accepted for good. A finding
 in it is marked suppressed (`kind: external`) in the merged SARIF -- the gate
-skips it, and it stays in the SARIF for audit. A missing baseline file is a
-no-op. The reusable workflow exposes it as the `baseline` input.
+skips it, and it stays in the SARIF for audit. An entry the scan no longer
+produces fails the run and is listed under "Stale baseline entries": it would
+accept the finding again if it came back, so it is removed instead. A missing
+baseline file is a no-op. The reusable workflow exposes it as the `baseline`
+input.
 
 GitHub's code-scanning SARIF ingestion does **not** act on `kind: external`
 suppressions -- confirmed empirically (a baselined finding stays open on the
@@ -123,7 +136,7 @@ Security tab after upload) and consistent with GitHub's own SARIF-support docs,
 which list no `suppressions` property support for third-party uploads. (It
 does honor `kind: inSource`, e.g. a tool's own `nosemgrep` comment -- that
 class of suppression is untouched by any of this.) `--dismiss-baseline` closes
-the gap: after the baseline diff, for every `external`-suppressed finding it
+the gap: for every finding the baseline accepted it
 looks up and closes the matching **open** GitHub code-scanning alert via the
 REST API (`dismissed_reason: "won't fix"`), so the Security tab actually
 reflects what the baseline says is already known. Matching is coarser than the
@@ -159,10 +172,7 @@ confirmed is benign, not just "whatever the scan happened to produce." A
 consumer repo's own `.scanctl/README.md` should record repo-specific context
 (what's baselined here and why) and link back here for the mechanism, rather
 than restating it -- see `catenahq/docs/.scanctl/README.md` for an example of
-that split. Pair a committed baseline with a weekly no-baseline re-scan (a
-`baseline-drift.yml` comparing fingerprints) so it can't rot silently; docs'
-`.scanctl/drift-check.py` is a ready-made comparator (mirrors
-`internal/sarif.Fingerprint`).
+that split.
 
 ### Image scanning: `images` and `image_pins`
 
@@ -223,8 +233,8 @@ scan means a suppression the operator wrote once takes effect in half the run,
 with nothing in the output saying which half. The cost is that an entry
 justified for one context applies in the other, so a CVE id suppressed because
 an image vendors an unpatched copy also stops gating on a first-party
-dependency of the same id. Keep the entries time-boxed (`expiredAt`) and let
-the expiry check fail on a lapsed one, which is what bounds that.
+dependency of the same id. Keep the entries time-boxed (`expiredAt`): trivy
+stops honouring an entry once it lapses, which is what bounds that.
 
 ### External SARIF (CodeQL and friends)
 
@@ -260,8 +270,8 @@ no-op, so the workflow also (a) posts the findings summary as one sticky PR
 comment (updated in place) and (b) uploads `scanctl.sarif` + the SBOM as a
 downloadable artifact. Together with `--baseline` these give private repos the
 same triage surface as the public Security tab. Inputs: `baseline`,
-`dismiss-baseline`, `no-baseline-ref`, `import-sarif`, `profile`, `no-gate`,
-`path`, `runner`.
+`dismiss-baseline`, `import-sarif`, `profile`, `no-gate`, `path`, `runner`,
+`scanctl-version`.
 
 ## Layout
 

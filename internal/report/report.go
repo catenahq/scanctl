@@ -92,7 +92,7 @@ func Summary(rep *sarif.Report, cfg config.Config) string {
 		blocking := blocks(run.Tool.Driver.Name)
 		rules := run.RulesByID()
 		for _, res := range run.Results {
-			sev := gate.Severity(rules, res)
+			sev := gate.Severity(run.Tool.Driver.Name, rules, res)
 			f := finding{tool: run.Tool.Driver.Name, sev: strings.ToUpper(string(sev)), rule: res.RuleID, msg: msg(res), loc: loc(res)}
 			if blocking && sev.Rank() >= floor && !res.Suppressed() {
 				gating = append(gating, f)

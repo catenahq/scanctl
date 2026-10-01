@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/catenahq/scanctl/internal/config"
+	"github.com/catenahq/scanctl/internal/sarif"
 )
 
 const catalogGo = "c.TraefikImage = \"traefik:v3.7.13\"\n"
@@ -170,20 +171,18 @@ func TestResolveBaseRefFollowsTheEvent(t *testing.T) {
 	for _, tc := range []struct {
 		name, event, baseRef, before string
 		want                         string
-		reportOnly                   bool
 	}{
-		{"a pull request compares with its target", "pull_request", "dev", "", "origin/dev", false},
-		{"a push compares with the commit before it", "push", "", sha, sha, false},
-		{"a push that created the branch compares with the default branch", "push", "", "0000000000000000000000000000000000000000", "origin/main", false},
-		{"a force push past a missing commit compares with the default branch", "push", "", "1111111111111111111111111111111111111111", "origin/main", false},
-		{"a scheduled run reports", "schedule", "", "", "", true},
-		{"a manual run reports", "workflow_dispatch", "", "", "", true},
+		{"a pull request compares with its target", "pull_request", "dev", "", "origin/dev"},
+		{"a push compares with the commit before it", "push", "", sha, sha},
+		{"a push that created the branch compares with the default branch", "push", "", "0000000000000000000000000000000000000000", "origin/main"},
+		{"a force push past a missing commit compares with the default branch", "push", "", "1111111111111111111111111111111111111111", "origin/main"},
+		{"a scheduled run grades no change", "schedule", "", "", ""},
+		{"a manual run grades no change", "workflow_dispatch", "", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			actionsEvent(t, tc.event, tc.baseRef, tc.before, "main")
-			ref, reportOnly := resolveBaseRef(ctx, root, "")
-			if ref != tc.want || reportOnly != tc.reportOnly {
-				t.Errorf("resolveBaseRef = %q,%v want %q,%v", ref, reportOnly, tc.want, tc.reportOnly)
+			if ref := resolveBaseRef(ctx, root, ""); ref != tc.want {
+				t.Errorf("resolveBaseRef = %q, want %q", ref, tc.want)
 			}
 		})
 	}
@@ -192,20 +191,37 @@ func TestResolveBaseRefFollowsTheEvent(t *testing.T) {
 func TestResolveBaseRefHonoursAnExplicitFlag(t *testing.T) {
 	root, _ := gitRepo(t)
 	actionsEvent(t, "schedule", "", "", "main")
-	if ref, reportOnly := resolveBaseRef(context.Background(), root, "origin/dev"); ref != "origin/dev" || reportOnly {
-		t.Errorf("explicit ref = %q,%v want origin/dev,false", ref, reportOnly)
-	}
-	if ref, reportOnly := resolveBaseRef(context.Background(), root, "none"); ref != "" || reportOnly {
-		t.Errorf(`"none" = %q,%v want no diff and the full gate`, ref, reportOnly)
+	if ref := resolveBaseRef(context.Background(), root, "origin/dev"); ref != "origin/dev" {
+		t.Errorf("explicit ref = %q, want origin/dev", ref)
 	}
 }
 
-// A local run is a full report: there is no event to read a base from.
 func TestResolveBaseRefOutsideActionsComparesWithNothing(t *testing.T) {
 	root, _ := gitRepo(t)
 	t.Setenv("GITHUB_ACTIONS", "")
-	if ref, reportOnly := resolveBaseRef(context.Background(), root, ""); ref != "" || reportOnly {
-		t.Errorf("local run = %q,%v want no diff and the full gate", ref, reportOnly)
+	if ref := resolveBaseRef(context.Background(), root, ""); ref != "" {
+		t.Errorf("local run = %q, want no base", ref)
+	}
+}
+
+// With no change to grade, an image CVE was introduced by nothing: it is
+// reported. A finding in the repo's own tree is untouched and still gates.
+func TestReportImageFindingsLeavesTheTreeGating(t *testing.T) {
+	rep := &sarif.Report{Runs: []sarif.Run{{
+		Tool: sarif.Tool{Driver: sarif.Driver{Name: "trivy"}},
+		Results: []sarif.Result{
+			{RuleID: "CVE-1", Properties: map[string]any{sarif.ImageProperty: "postgres:18"}},
+			{RuleID: "CVE-2"},
+		},
+	}}}
+	if n := reportImageFindings(rep); n != 1 {
+		t.Fatalf("marked %d, want the image finding only", n)
+	}
+	if s := rep.Runs[0].Results[0].Suppressions; len(s) != 1 || s[0].Justification != sarif.NoChange {
+		t.Errorf("image finding suppressions = %v", s)
+	}
+	if rep.Runs[0].Results[1].Suppressed() {
+		t.Error("a finding in the tree must keep gating")
 	}
 }
 

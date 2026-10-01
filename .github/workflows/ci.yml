@@ -1,9 +1,7 @@
 name: CI
 
 # Build/vet/test the scanctl binary, then dogfood it: run scanctl on its own
-# source. The self-scan is report-only (--no-gate) until the baseline is
-# acknowledged; its SARIF is uploaded to code scanning. Go comes from
-# ~/.local/go on the self-hosted runner (matches catenahq/* convention).
+# source, gated like every caller. Its SARIF is uploaded to code scanning.
 
 on:
   # Every pushed branch. Renovate and engine-bump branches always carry a pull
@@ -23,8 +21,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-      - name: Put Go on PATH
-        run: echo "$HOME/.local/go/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: stable
       - run: go version
       - run: go build ./...
       - run: go vet ./...
@@ -41,12 +40,19 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Put Go on PATH
-        run: echo "$HOME/.local/go/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: stable
+      - name: Install uv
+        # uv backs guarddog, lazy-fetched at scan time.
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Build scanctl
         run: go build -o scanctl ./cmd/scanctl
-      - name: Run scanctl on itself (report-only)
-        run: ./scanctl run --no-gate --out scanctl.sarif --summary "$GITHUB_STEP_SUMMARY" .
+      - name: Run scanctl on itself
+        env:
+          # zizmor's API-backed audits use this when present; absent = --offline.
+          GH_TOKEN: ${{ github.token }}
+        run: ./scanctl run --out scanctl.sarif --summary "$GITHUB_STEP_SUMMARY" .
       - name: Upload SARIF to code scanning
         if: always()
         uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463 # v4

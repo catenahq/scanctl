@@ -68,21 +68,22 @@ run flags:
   -summary string  markdown summary output path (default: stdout only)
   -sbom string     write a CycloneDX SBOM to this path (syft)
   -baseline string optional SARIF of findings accepted for good; they are
-                   suppressed on every run (missing file = no-op)
+                   suppressed on every run, and an entry the scan no longer
+                   produces fails it (missing file = no-op)
   -dismiss-baseline
                    also close the matching GitHub code-scanning alert for every
-                   -baseline-suppressed finding (GitHub does not act on SARIF
+                   finding the -baseline accepted (GitHub does not act on SARIF
                    "external" suppressions itself). Requires GITHUB_REPOSITORY +
                    GH_TOKEN/GITHUB_TOKEN (set by Actions); a no-op elsewhere.
                    Ignored unless -baseline is also set.
   -baseline-ref string
-                   git ref (e.g. origin/main); the merge-base of HEAD and it is
-                   scanned in a temp worktree and its findings are suppressed,
-                   so only findings the change introduces gate. Empty inside
-                   GitHub Actions: read from the event (pull request: its
-                   target branch; push: the commit before it; schedule or
-                   workflow_dispatch: no diff, report without gating). Empty
-                   elsewhere, or "none": no diff, every finding gates
+                   git ref (e.g. origin/main); the images pinned at the
+                   merge-base of HEAD and it are scanned too, and only the
+                   image CVEs the change introduces gate. Findings in the
+                   repo's own tree gate either way. Empty inside GitHub
+                   Actions: read from the event (pull request: its target
+                   branch; push: the commit before it). With no ref, image
+                   findings are reported, not gated
   -import string   fold an external SARIF file (e.g. CodeQL) into the merge;
                    repeatable
   -no-gate         scan and report but always exit 0
@@ -136,10 +137,7 @@ func runCmd(args []string) int {
 	// what the change touches is what lets the image pins be narrowed to it,
 	// and both sides of the diff have to be narrowed the same way or the
 	// baseline stops lining up with the report it is suppressing against.
-	baseRef, reportOnly := resolveBaseRef(context.Background(), root, *baselineRef)
-	if reportOnly {
-		fmt.Printf("%s run: no change to grade, reporting without gating\n", os.Getenv("GITHUB_EVENT_NAME"))
-	}
+	baseRef := resolveBaseRef(context.Background(), root, *baselineRef)
 	baseSha := ""
 	if baseRef != "" {
 		fmt.Printf("baseline-ref: comparing with %s\n", baseRef)
@@ -174,29 +172,39 @@ func runCmd(args []string) int {
 		fmt.Printf("imported %d finding(s) from %s\n", ext.ResultCount(), p)
 	}
 
-	// Diff against the merge-base with a git ref: findings already present
-	// there are marked suppressed so only findings this change INTRODUCES can
-	// gate. A failed baseline scan degrades to the full gate (stricter, never
-	// looser) with a warning rather than failing the run.
+	// Image CVEs are upstream's to fix: only the ones a change INTRODUCES gate.
+	// With a base, the images it pinned are scanned and their findings
+	// suppressed; a failed base scan degrades to the full gate (stricter,
+	// never looser) with a warning. With no change to grade, no image finding
+	// was introduced, so all of them are reported.
 	if baseSha != "" {
 		set, err := baselineRefSet(context.Background(), root, baseSha, *cfgPath, *profile, cfg, lock)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "warning: baseline-ref:", err)
 		} else if n := baseline.ApplyRoot(out.Report, set, absPath(root)); n > 0 {
-			fmt.Printf("baseline-ref: suppressed %d finding(s) already present at %.12s\n", n, baseSha)
+			fmt.Printf("baseline-ref: suppressed %d image finding(s) already present at %.12s\n", n, baseSha)
+		}
+	} else if baseRef == "" {
+		if n := reportImageFindings(out.Report); n > 0 {
+			fmt.Printf("no change to grade: %d image finding(s) reported, not gated\n", n)
 		}
 	}
 
 	// Findings accepted for good in a committed baseline are marked suppressed
-	// (kind: external) on every run.
+	// (kind: external) on every run. An entry the scan no longer produces fails
+	// the run: it would accept the finding again if it came back.
+	var stale []baseline.Entry
 	if *baselinePath != "" {
-		base, err := baseline.Load(*baselinePath)
+		baseRep, err := baseline.LoadReport(*baselinePath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "baseline:", err)
 			return 2
 		}
-		if n := baseline.Apply(out.Report, base); n > 0 {
-			fmt.Printf("baseline: suppressed %d known finding(s) from %s\n", n, *baselinePath)
+		if baseRep != nil {
+			if n := baseline.Apply(out.Report, baseline.FromReport(baseRep)); n > 0 {
+				fmt.Printf("baseline: suppressed %d known finding(s) from %s\n", n, *baselinePath)
+			}
+			stale = baseline.Stale(baseRep, out.Report)
 		}
 
 		// The SARIF suppression above never closes the GitHub alert itself
@@ -226,7 +234,7 @@ func runCmd(args []string) int {
 	uploadResults(ctx, cfg, *outPath)
 	sbomStep(ctx, cfg, lock, root, *sbomOut)
 
-	summary := report.Summary(out.Report, cfg)
+	summary := report.Summary(out.Report, cfg) + staleSection(*baselinePath, stale)
 	fmt.Print(summary)
 	fmt.Printf("\nran: %v\n", out.Ran)
 	if *summaryPath != "" {
@@ -240,13 +248,32 @@ func runCmd(args []string) int {
 	fmt.Printf("gate: %d gating finding(s) of %d total (floor=%s)\n",
 		verdict.Gating, verdict.Total, cfg.Gate.Floor)
 
-	if *noGate || reportOnly {
+	if *noGate {
 		return 0
 	}
-	if verdict.Failed() {
+	if verdict.Failed() || len(stale) > 0 {
 		return 1
 	}
 	return 0
+}
+
+// staleSection lists the committed baseline entries the scan no longer
+// produces; "" when there are none.
+func staleSection(path string, stale []baseline.Entry) string {
+	if len(stale) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n### Stale baseline entries (%d)\n\n", len(stale))
+	fmt.Fprintf(&b, "%s accepts findings this scan no longer produces. Remove them.\n\n", path)
+	for _, e := range stale {
+		where := ""
+		if len(e.Result.Locations) > 0 {
+			where = " (" + e.Result.Locations[0].PhysicalLocation.ArtifactLocation.URI + ")"
+		}
+		fmt.Fprintf(&b, "- [%s] %s%s\n", e.Tool, e.Result.RuleID, where)
+	}
+	return b.String()
 }
 
 // uploadResults pushes the merged SARIF to DefectDojo when configured. A

@@ -19,18 +19,39 @@ import (
 // baseline instances suppress at most N current matches.
 type Set map[string]int
 
-// Load reads a baseline SARIF file and returns its fingerprint set. A missing
-// file is not an error: an empty set suppresses nothing, so a repo with no
-// committed baseline behaves exactly as before.
-func Load(path string) (Set, error) {
+// LoadReport reads a committed baseline SARIF. A missing file is not an error:
+// it returns nil, and a repo with no committed baseline accepts nothing.
+func LoadReport(path string) (*sarif.Report, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return Set{}, nil
+		return nil, nil
 	}
-	rep, err := sarif.Load(path)
-	if err != nil {
-		return nil, err
+	return sarif.Load(path)
+}
+
+// Entry is one finding of a report, with the tool that produced it.
+type Entry struct {
+	Tool   string
+	Result sarif.Result
+}
+
+// Stale returns the baseline entries cur no longer produces: findings accepted
+// for good that have since been fixed or moved, which the baseline would go on
+// suppressing if they came back. N current instances of a fingerprint cover N
+// baseline entries.
+func Stale(base, cur *sarif.Report) []Entry {
+	have := fingerprints(cur)
+	var stale []Entry
+	for _, run := range base.Runs {
+		tool := run.Tool.Driver.Name
+		for _, r := range run.Results {
+			if fp := sarif.Fingerprint(tool, r); have[fp] > 0 {
+				have[fp]--
+				continue
+			}
+			stale = append(stale, Entry{Tool: tool, Result: r})
+		}
 	}
-	return fingerprints(rep), nil
+	return stale
 }
 
 func fingerprints(rep *sarif.Report) Set {
@@ -57,16 +78,21 @@ func FromReport(rep *sarif.Report, roots ...string) Set {
 }
 
 // Apply marks every not-yet-suppressed result in rep whose fingerprint is in
-// the baseline as suppressed (kind: external). Returns the count newly
-// suppressed.
+// the committed baseline as suppressed (kind: external, AcceptedInBaseline).
+// Returns the count newly suppressed.
 func Apply(rep *sarif.Report, base Set) int {
-	return ApplyRoot(rep, base)
+	return apply(rep, base, sarif.AcceptedInBaseline)
 }
 
-// ApplyRoot is Apply with the same root normalization as FromReport: base must
-// have been built with FromReport and the same roots for the fingerprints to
-// line up.
+// ApplyRoot suppresses the results the base-commit scan already had (kind:
+// external, PresentBefore), with the same root normalization as FromReport:
+// base must have been built with FromReport and the same roots for the
+// fingerprints to line up.
 func ApplyRoot(rep *sarif.Report, base Set, roots ...string) int {
+	return apply(rep, base, sarif.PresentBefore, roots...)
+}
+
+func apply(rep *sarif.Report, base Set, why string, roots ...string) int {
 	if len(base) == 0 {
 		return 0
 	}
@@ -84,7 +110,7 @@ func ApplyRoot(rep *sarif.Report, base Set, roots ...string) int {
 			}
 			if fp := fingerprintRoot(tool, *r, roots); left[fp] > 0 {
 				left[fp]--
-				r.Suppressions = append(r.Suppressions, sarif.Suppression{Kind: "external"})
+				r.Suppressions = append(r.Suppressions, sarif.Suppression{Kind: "external", Justification: why})
 				n++
 			}
 		}
