@@ -3,7 +3,8 @@ name: scanctl
 # Reusable workflow: drop one call into any repo to run the scanctl bundle.
 # scanctl is fetched with `go install` (tools.lock is embedded, so the scanner
 # pins travel with it); the scanners themselves are lazy-fetched at scan time.
-# Findings in the repo's own tree gate on every run. Image CVEs gate only when a
+# Findings in the repo's own tree, and in an image the repo builds (pre-scan +
+# own-images), gate on every run. CVEs in the images it pins gate only when a
 # pull_request or push introduces them; scanctl reads the commit to compare
 # with from the event.
 #
@@ -17,6 +18,11 @@ name: scanctl
 #       with:
 #         scanctl-version: v0.1.0
 #         # baseline: .scanctl/baseline.sarif   # optional: findings accepted for good
+#         # pre-scan: docker buildx build -t app:ci .   # optional: build an own image
+#         # own-images: app:ci                           # gated on every run
+#       # secrets:                 # optional: Docker Hub pulls, logged in
+#       #   DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+#       #   DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 #       permissions:
 #         contents: read
 #         security-events: write   # code-scanning upload (public / GHAS only)
@@ -57,10 +63,27 @@ on:
         description: runs-on label
         type: string
         default: ubuntu-latest
+      pre-scan:
+        description: shell commands run in the checkout before the scan, e.g. the docker build of an image passed in own-images
+        type: string
+        default: ""
+      own-images:
+        description: whitespace-separated refs of images this repo builds (in pre-scan); their CVEs gate on every run (--own-image)
+        type: string
+        default: ""
+    secrets:
+      DOCKERHUB_USERNAME:
+        description: Docker Hub user; with DOCKERHUB_TOKEN, image pulls run logged in, under the account's rate limit
+        required: false
+      DOCKERHUB_TOKEN:
+        description: Docker Hub access token for DOCKERHUB_USERNAME
+        required: false
 
 jobs:
   scan:
     runs-on: ${{ inputs.runner }}
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     permissions:
       contents: read
       security-events: write
@@ -113,6 +136,16 @@ jobs:
             fi
           done
           go install "github.com/catenahq/scanctl/cmd/scanctl@${version}"
+      - name: Docker Hub login
+        if: env.DOCKERHUB_USERNAME != ''
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+      - name: Pre-scan
+        if: inputs.pre-scan != ''
+        env:
+          PRE_SCAN: ${{ inputs.pre-scan }}
+        run: bash -euo pipefail -c "$PRE_SCAN"
       - name: Run scanctl
         env:
           # zizmor's API-backed audits use this when present; absent = it runs --offline.
@@ -125,6 +158,7 @@ jobs:
           BASELINE: ${{ inputs.baseline }}
           DISMISS_BASELINE: ${{ inputs.dismiss-baseline }}
           IMPORT_SARIF: ${{ inputs.import-sarif }}
+          OWN_IMAGES: ${{ inputs.own-images }}
         run: |
           gate_flag=""
           if [ "$NO_GATE" = "true" ]; then gate_flag="--no-gate"; fi
@@ -136,7 +170,9 @@ jobs:
           if [ -n "$BASELINE" ] && [ "$DISMISS_BASELINE" = "true" ]; then dismiss_flag="--dismiss-baseline"; fi
           import_flag=""
           if [ -n "$IMPORT_SARIF" ]; then import_flag="--import $IMPORT_SARIF"; fi
-          "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag $baseline_flag $dismiss_flag $import_flag \
+          own_flag=""
+          for ref in $OWN_IMAGES; do own_flag="$own_flag --own-image $ref"; done
+          "$(go env GOPATH)/bin/scanctl" run $gate_flag $profile_flag $baseline_flag $dismiss_flag $import_flag $own_flag \
             --out scanctl.sarif --sbom sbom.cdx.json \
             --summary scanctl-summary.md "$SCAN_PATH"
           cat scanctl-summary.md >> "$GITHUB_STEP_SUMMARY"
