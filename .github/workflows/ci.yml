@@ -40,11 +40,10 @@ jobs:
           path: scanctl
           persist-credentials: false
       - name: Check out sibling contracts
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: catenahq/contracts/.github/actions/checkout-sibling@main
         with:
           repository: catenahq/contracts
           path: contracts
-          persist-credentials: false
       - name: Repo rules (no tracked env file; .gitignore carries the env rule)
         working-directory: ./scanctl
         run: node ../contracts/scripts/check-repo-rules.mjs
