@@ -6,8 +6,10 @@ name: CI
 # ~/.local/go on the self-hosted runner (matches catenahq/* convention).
 
 on:
+  # Every pushed branch. Renovate and engine-bump branches always carry a pull
+  # request, which tests each push to them.
   push:
-    branches: [main]
+    branches-ignore: ['renovate/**', 'engine-bump/**', 'scanctl/**']
   pull_request:
 
 permissions:
