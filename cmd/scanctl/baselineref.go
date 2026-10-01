@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/catenahq/scanctl/internal/baseline"
@@ -46,6 +48,7 @@ func baselineRefSet(ctx context.Context, root, sha, cfgPath, profile string, cfg
 	}()
 
 	base := worktreeConfig(cfgPath, profile, root, dir, cfg)
+	base = scopeImagePins(ctx, base, root, sha)
 	base = preresolveBasePins(base, dir)
 	out, err := runner.ScanImages(ctx, dir, base, lock)
 	if err != nil {
@@ -147,9 +150,14 @@ func mergeBase(ctx context.Context, root, ref string) (string, error) {
 // run. A run without -baseline-ref keeps every pin, which is how a scheduled
 // run reports the CVEs in an image nobody touched.
 //
+// A glob pin becomes one pin per file it matches among the changed files, so a
+// change to one of many files a glob covers scans that file's images only. A
+// matched file the change deleted is left out: it has no image on HEAD.
+//
 // Compared against the WORKING TREE rather than HEAD, because the working tree
 // is what the scan actually reads: an uncommitted edit to a pin file would
-// otherwise be scanned but not scoped in.
+// otherwise be scanned but not scoped in. Both sides of the diff are scoped
+// with the same call, so the baseline scans only what the report can match.
 func scopeImagePins(ctx context.Context, cfg config.Config, root, baseSha string) config.Config {
 	if len(cfg.ImagePins) == 0 {
 		return cfg
@@ -160,22 +168,26 @@ func scopeImagePins(ctx context.Context, cfg config.Config, root, baseSha string
 		fmt.Fprintln(os.Stderr, "warning: baseline-ref: changed-file scope:", err)
 		return cfg
 	}
-	changed := map[string]bool{}
+	var changed []string
 	for _, line := range strings.Split(out, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
-			changed[line] = true
+			changed = append(changed, line)
 		}
 	}
+	sort.Strings(changed)
 	var kept []config.ImagePin
 	for _, pin := range cfg.ImagePins {
-		if changed[pin.File] {
-			kept = append(kept, pin)
+		for _, f := range changed {
+			if ok, _ := path.Match(pin.File, f); !ok {
+				continue
+			}
+			if runner.IsGlob(pin.File) {
+				if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(f))); err != nil {
+					continue
+				}
+			}
+			kept = append(kept, config.ImagePin{File: f, Pattern: pin.Pattern, Repo: pin.Repo})
 		}
-	}
-	if len(kept) != len(cfg.ImagePins) {
-		fmt.Printf("image_pins: %d of %d pin file(s) changed since %.12s; "+
-			"the rest resolve identically on both sides and are not rescanned\n",
-			len(kept), len(cfg.ImagePins), baseSha)
 	}
 	cfg.ImagePins = kept
 	return cfg

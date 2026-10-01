@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,9 +153,11 @@ func resolveImageRefs(cfg config.Config, root string) ([]string, error) {
 	return refs, nil
 }
 
-// ResolveImagePin returns every ref pin.Pattern captures in pin.File. An empty
-// result is an error, not an empty list: a pin that matches nothing is the
-// exact shape of an image that stopped being scanned without anyone noticing.
+// ResolveImagePin returns every ref pin.Pattern captures in the files pin.File
+// names: one path, or a glob (path.Match syntax, slash-separated) over many.
+// An empty result is an error, not an empty list: a pin that matches no file,
+// or whose files yield no ref, is the exact shape of an image that stopped
+// being scanned without anyone noticing.
 func ResolveImagePin(pin config.ImagePin, root string) ([]string, error) {
 	if pin.File == "" || pin.Pattern == "" {
 		return nil, fmt.Errorf("image_pins: an entry needs both file and pattern (got file=%q pattern=%q)", pin.File, pin.Pattern)
@@ -166,25 +169,40 @@ func ResolveImagePin(pin config.ImagePin, root string) ([]string, error) {
 	if n := rx.NumSubexp(); n != 1 {
 		return nil, fmt.Errorf("image_pins: %s: pattern %q has %d capturing groups, need exactly 1 yielding <repo>:<tag>", pin.File, pin.Pattern, n)
 	}
-	path := filepath.Join(root, filepath.FromSlash(pin.File))
-	data, err := os.ReadFile(path) // #nosec G304 -- path is the operator-declared pin file inside the scanned tree
+	// Globbed inside root rather than over root+pattern, so a root path that
+	// happens to hold glob characters cannot change what matches.
+	files, err := fs.Glob(os.DirFS(root), pin.File)
 	if err != nil {
-		return nil, fmt.Errorf("image_pins: %s: %w", pin.File, err)
+		return nil, fmt.Errorf("image_pins: %s: bad file glob: %w", pin.File, err)
 	}
-	matches := rx.FindAllStringSubmatch(string(data), -1)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("image_pins: %s: no such file", pin.File)
+	}
 	var refs []string
-	for _, m := range matches {
-		got := strings.TrimSpace(m[1])
-		if got == "" {
-			continue
+	for _, f := range files {
+		path := filepath.Join(root, filepath.FromSlash(f))
+		data, err := os.ReadFile(path) // #nosec G304 -- path is an operator-declared pin file inside the scanned tree
+		if err != nil {
+			return nil, fmt.Errorf("image_pins: %s: %w", f, err)
 		}
-		if pin.Repo != "" {
-			got = pin.Repo + ":" + got
+		for _, m := range rx.FindAllStringSubmatch(string(data), -1) {
+			got := strings.TrimSpace(m[1])
+			if got == "" {
+				continue
+			}
+			if pin.Repo != "" {
+				got = pin.Repo + ":" + got
+			}
+			refs = append(refs, got)
 		}
-		refs = append(refs, got)
 	}
 	if len(refs) == 0 {
 		return nil, fmt.Errorf("image_pins: %s: pattern %q matched no image ref -- the pin moved or was renamed, and leaving it unmatched would scan nothing and still report clean", pin.File, pin.Pattern)
 	}
 	return refs, nil
+}
+
+// IsGlob reports whether an image pin's file names several files.
+func IsGlob(file string) bool {
+	return strings.ContainsAny(file, "*?[")
 }

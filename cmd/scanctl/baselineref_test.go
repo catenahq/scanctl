@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/catenahq/scanctl/internal/config"
@@ -111,6 +112,54 @@ func TestScopeImagePinsKeepsEveryPinWhenTheDiffFails(t *testing.T) {
 		config.Config{ImagePins: pins()}, root, "not-a-sha")
 	if len(got.ImagePins) != 2 {
 		t.Errorf("kept %v, want both: an unreadable diff must widen the scan, not narrow it", got.ImagePins)
+	}
+}
+
+// A glob pin is narrowed to the files under it the change touches, one pin per
+// file, so a PR editing one blueprint scans that blueprint's images only. A
+// file the change deleted has no image left to scan on HEAD.
+func TestScopeImagePinsNarrowsAGlobToTheChangedFiles(t *testing.T) {
+	root, _ := gitRepo(t)
+	commitAll := func(msg string) string {
+		t.Helper()
+		for _, args := range [][]string{
+			{"add", "-A"},
+			{"-c", "user.name=t", "-c", "user.email=t@e", "commit", "-qm", msg},
+		} {
+			if _, err := gitOut(context.Background(), root, args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		sha, err := gitOut(context.Background(), root, "rev-parse", "HEAD")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sha
+	}
+	write(t, root, "blueprints/a/compose.yml", "image: nginx:1.31\n")
+	write(t, root, "blueprints/b/compose.yml", "image: redis:8.10\n")
+	write(t, root, "blueprints/c/compose.yml", "image: mongo:8.3\n")
+	base := commitAll("blueprints")
+	write(t, root, "blueprints/b/compose.yml", "image: redis:8.11\n")
+	write(t, root, "blueprints/d/compose.yml", "image: valkey:9.0\n")
+	if err := os.Remove(filepath.Join(root, "blueprints/c/compose.yml")); err != nil {
+		t.Fatal(err)
+	}
+	commitAll("edit b, add d, delete c")
+
+	glob := config.ImagePin{File: "blueprints/*/compose.yml", Pattern: `image: (\S+)`}
+	got := scopeImagePins(context.Background(),
+		config.Config{ImagePins: []config.ImagePin{glob}}, root, base)
+
+	var files []string
+	for _, p := range got.ImagePins {
+		if p.Pattern != glob.Pattern {
+			t.Errorf("%s: pattern %q, want the glob's", p.File, p.Pattern)
+		}
+		files = append(files, p.File)
+	}
+	if want := "blueprints/b/compose.yml,blueprints/d/compose.yml"; strings.Join(files, ",") != want {
+		t.Errorf("kept %v, want %s: the edited and added files, not the untouched or deleted ones", files, want)
 	}
 }
 

@@ -138,6 +138,37 @@ func TestResolveImageRefsRejectsAPatternWithoutOneGroup(t *testing.T) {
 	}
 }
 
+// A glob pin reads every file it matches, and one of them yielding no ref is
+// fine while another does.
+func TestResolveImagePinReadsEveryFileAGlobMatches(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "blueprints/a/docker-compose.yml", "services:\n  a:\n    image: nginx:1.31-alpine\n")
+	writeFile(t, root, "blueprints/b/docker-compose.yml", "services:\n  b:\n    image: \"redis:8.10.1\"\n  c:\n    image: postgres:18.6\n")
+	writeFile(t, root, "blueprints/c/docker-compose.yml", "services: {}\n")
+
+	refs, err := ResolveImagePin(config.ImagePin{
+		File:    "blueprints/*/docker-compose.yml",
+		Pattern: `(?m)^\s*image:\s*["']?([^"'\s#]+)`,
+	}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "nginx:1.31-alpine,redis:8.10.1,postgres:18.6"
+	if strings.Join(refs, ",") != want {
+		t.Errorf("refs = %v, want %s", refs, want)
+	}
+}
+
+func TestResolveImagePinFailsWhenAGlobMatchesNoFile(t *testing.T) {
+	_, err := ResolveImagePin(config.ImagePin{
+		File:    "blueprints/*/docker-compose.yml",
+		Pattern: `image: (\S+)`,
+	}, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("err = %v, want a glob matching no file to fail the run", err)
+	}
+}
+
 // An Ansible role default splits the repo off the tag, so the pattern matches
 // the tag line and `repo` supplies the other half.
 func TestResolveImageRefsComposesRepoWithACapturedTag(t *testing.T) {

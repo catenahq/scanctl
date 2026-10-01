@@ -146,7 +146,12 @@ func runCmd(args []string) int {
 			fmt.Fprintln(os.Stderr, "warning: baseline-ref:", err)
 		} else {
 			baseSha = sha
-			cfg = scopeImagePins(context.Background(), cfg, root, sha)
+			if len(cfg.ImagePins) > 0 {
+				cfg = scopeImagePins(context.Background(), cfg, root, sha)
+				fmt.Printf("image_pins: %d pin file(s) changed since %.12s; "+
+					"the rest resolve identically on both sides and are not rescanned\n",
+					len(cfg.ImagePins), sha)
+			}
 		}
 	}
 
