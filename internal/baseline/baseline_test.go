@@ -189,9 +189,9 @@ func TestLoadReportOfAMissingFileIsNil(t *testing.T) {
 	}
 }
 
-// An accepted finding that was fixed leaves its entry behind; the entry would
-// silently accept the finding again if it came back.
-func TestStaleNamesTheEntriesTheScanNoLongerProduces(t *testing.T) {
+// A fixed finding leaves its accepted entry behind; the entry would silently
+// accept the finding again if it came back.
+func TestStaleNamesTheEntriesTheScanDoesNotProduce(t *testing.T) {
 	base := &sarif.Report{Runs: []sarif.Run{
 		mk("semgrep", "renovate-age", "renovate.json", 5),
 		mk("semgrep", "renovate-age", "renovate.json", 5),

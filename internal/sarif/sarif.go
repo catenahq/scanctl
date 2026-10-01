@@ -272,8 +272,8 @@ func New() *Report {
 	return &Report{Schema: schema, Version: version, Runs: []Run{}}
 }
 
-// Load reads a SARIF document from path. Used to fold externally-produced SARIF
-// (e.g. CodeQL) into the merge and to read a baseline.
+// Load reads a SARIF document from path: an externally-produced SARIF (e.g.
+// CodeQL) to fold into the merge, or a committed baseline.
 func Load(path string) (*Report, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- operator-provided SARIF path
 	if err != nil {

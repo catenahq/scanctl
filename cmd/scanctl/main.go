@@ -191,8 +191,8 @@ func runCmd(args []string) int {
 	}
 
 	// Findings accepted for good in a committed baseline are marked suppressed
-	// (kind: external) on every run. An entry the scan no longer produces fails
-	// the run: it would accept the finding again if it came back.
+	// (kind: external) on every run. An entry matching nothing in this scan
+	// fails the run: it would accept the finding again if it came back.
 	var stale []baseline.Entry
 	if *baselinePath != "" {
 		baseRep, err := baseline.LoadReport(*baselinePath)
@@ -257,15 +257,15 @@ func runCmd(args []string) int {
 	return 0
 }
 
-// staleSection lists the committed baseline entries the scan no longer
-// produces; "" when there are none.
+// staleSection lists the committed baseline entries that match nothing in this
+// scan; "" when there are none.
 func staleSection(path string, stale []baseline.Entry) string {
 	if len(stale) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n### Stale baseline entries (%d)\n\n", len(stale))
-	fmt.Fprintf(&b, "%s accepts findings this scan no longer produces. Remove them.\n\n", path)
+	fmt.Fprintf(&b, "%s accepts findings this scan does not produce. Remove them.\n\n", path)
 	for _, e := range stale {
 		where := ""
 		if len(e.Result.Locations) > 0 {

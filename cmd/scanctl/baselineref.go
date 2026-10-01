@@ -19,8 +19,8 @@ import (
 // a temporary git worktree, and returns their findings' fingerprint set. An
 // image finding already present there is suppressed (kind: external), so only
 // the image CVEs a change INTRODUCES gate. Only images are diffed: a finding in
-// the repo's own tree is fixable by a change to it, so it gates whether or not
-// it was already there. resolveBaseRef picks ref.
+// the repo's own tree is fixable by a change to it, so it gates on every run.
+// resolveBaseRef picks ref.
 //
 // cfgPath and profile are what main parsed, so the baseline scan can re-read
 // the config from the worktree: settings that name things OUTSIDE the tree --
@@ -187,9 +187,8 @@ func scopeImagePins(ctx context.Context, cfg config.Config, root, baseSha string
 // On the HEAD scan an unresolvable pin fails the run, because it means an
 // image is silently going unscanned. The base branch is the opposite case: a
 // pin this change ADDS, or one whose file this change creates, correctly has
-// nothing to resolve at the merge base. That is not a broken config, it is a
-// pin with no baseline -- and a pin with no baseline should have every one of
-// its findings gate, which is what an absent entry here produces.
+// nothing to resolve at the merge base: it is a pin with no baseline, and every
+// one of its findings gates, which is what an absent entry here produces.
 //
 // Resolving here rather than letting the runner do it also keeps one bad pin
 // from costing the whole diff: a hard failure inside the baseline scan

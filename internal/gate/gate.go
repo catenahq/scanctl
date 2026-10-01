@@ -54,7 +54,7 @@ func cvssToSeverity(score float64) config.Severity {
 // Severity resolves a result's severity, preferring the CVSS "security-
 // severity" score (from the result's own properties, then its rule's) over the
 // coarse SARIF level. This makes the gate floor mean what it says: a MEDIUM CVE
-// a tool happens to emit at error-level no longer over-gates, and vice versa.
+// a tool happens to emit at error-level does not over-gate, and vice versa.
 // gitleaks reports no severity at all, and a committed secret is critical.
 // Exported so the report renders the same severity the gate decides on.
 func Severity(tool string, rules map[string]sarif.Rule, r sarif.Result) config.Severity {

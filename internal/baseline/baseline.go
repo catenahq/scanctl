@@ -34,10 +34,10 @@ type Entry struct {
 	Result sarif.Result
 }
 
-// Stale returns the baseline entries cur no longer produces: findings accepted
-// for good that have since been fixed or moved, which the baseline would go on
-// suppressing if they came back. N current instances of a fingerprint cover N
-// baseline entries.
+// Stale returns the baseline entries that match nothing in cur: accepted
+// findings that are fixed or moved, which the baseline would suppress again if
+// they came back. N current instances of a fingerprint cover N baseline
+// entries.
 func Stale(base, cur *sarif.Report) []Entry {
 	have := fingerprints(cur)
 	var stale []Entry

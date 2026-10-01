@@ -73,10 +73,10 @@ type alert struct {
 	} `json:"most_recent_instance"`
 }
 
-// Dismiss closes every open alert matching a baseline-suppressed result in rep.
-// Matching is coarser than sarif.Fingerprint (tool+rule+file+line, no message
-// text): that's the only identity the alerts API exposes for a third-party
-// result, and it is only ever used to LOCATE the live alert -- baseline.Apply
+// Dismiss closes every open alert matching a result in rep the baseline
+// accepted. Matching is coarser than sarif.Fingerprint (tool+rule+file+line,
+// no message text): that's the only identity the alerts API exposes for a
+// third-party result, and it only LOCATES the live alert -- baseline.Apply
 // already decided suppression on the finer-grained fingerprint. Returns the
 // count dismissed.
 func (c Client) Dismiss(ctx context.Context, rep *sarif.Report) (int, error) {
