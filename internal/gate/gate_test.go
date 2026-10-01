@@ -86,6 +86,36 @@ func TestSecuritySeverityOverridesLevel(t *testing.T) {
 	}
 }
 
+// gosec emits every rule at level error and states the rule's real severity
+// only as a tag; the tag decides.
+func TestRuleSeverityTagOverridesLevel(t *testing.T) {
+	cfg := baseCfg() // floor = high
+	rule := func(id string, tags ...any) sarif.Rule {
+		return sarif.Rule{ID: id, Properties: map[string]any{"precision": "high", "tags": tags}}
+	}
+	rep := &sarif.Report{Runs: []sarif.Run{{
+		Tool: sarif.Tool{Driver: sarif.Driver{
+			Name: "gosec",
+			Rules: []sarif.Rule{
+				rule("G204", "security", "MEDIUM"),
+				rule("G702", "security", "HIGH"),
+				rule("G999", "security"),
+				rule("G998", "security", "LOW", "HIGH"),
+			},
+		}},
+		Results: []sarif.Result{
+			{RuleID: "G204", Level: sarif.LevelError}, // MEDIUM tag -> medium -> does not gate
+			{RuleID: "G702", Level: sarif.LevelError}, // HIGH tag -> high -> gates
+			{RuleID: "G999", Level: sarif.LevelError}, // no severity tag -> level -> gates
+			{RuleID: "G998", Level: sarif.LevelNote},  // two severity tags -> level -> does not gate
+		},
+	}}}
+	v := Evaluate(rep, cfg)
+	if v.Gating != 2 {
+		t.Errorf("gating = %d, want 2 (the HIGH tag and the untagged error)", v.Gating)
+	}
+}
+
 func TestSuppressedFindingNeverGates(t *testing.T) {
 	cfg := baseCfg() // floor = high; error maps to high
 	// A block-mode error-level finding that the tool suppressed in source

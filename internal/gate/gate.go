@@ -51,12 +51,38 @@ func cvssToSeverity(score float64) config.Severity {
 	}
 }
 
+// tagSeverity reads a severity a tool states as a rule tag (gosec tags each
+// rule "HIGH", "MEDIUM" or "LOW"). ok is false unless exactly one severity tag
+// is present.
+func tagSeverity(props map[string]any) (config.Severity, bool) {
+	tags, _ := props["tags"].([]any)
+	var found []config.Severity
+	for _, t := range tags {
+		switch t {
+		case "CRITICAL":
+			found = append(found, config.SevCritical)
+		case "HIGH":
+			found = append(found, config.SevHigh)
+		case "MEDIUM":
+			found = append(found, config.SevMedium)
+		case "LOW":
+			found = append(found, config.SevLow)
+		}
+	}
+	if len(found) != 1 {
+		return config.SevNone, false
+	}
+	return found[0], true
+}
+
 // Severity resolves a result's severity, preferring the CVSS "security-
-// severity" score (from the result's own properties, then its rule's) over the
-// coarse SARIF level. This makes the gate floor mean what it says: a MEDIUM CVE
-// a tool happens to emit at error-level does not over-gate, and vice versa.
-// gitleaks reports no severity at all, and a committed secret is critical.
-// Exported so the report renders the same severity the gate decides on.
+// severity" score (from the result's own properties, then its rule's), then a
+// severity tag on its rule, over the coarse SARIF level. This makes the gate
+// floor mean what it says: a MEDIUM finding a tool happens to emit at
+// error-level (gosec emits every rule at error) does not over-gate, and vice
+// versa. gitleaks reports no severity at all, and a committed secret is
+// critical. Exported so the report renders the same severity the gate decides
+// on.
 func Severity(tool string, rules map[string]sarif.Rule, r sarif.Result) config.Severity {
 	if tool == "gitleaks" {
 		return config.SevCritical
@@ -67,6 +93,9 @@ func Severity(tool string, rules map[string]sarif.Rule, r sarif.Result) config.S
 	if rule, ok := rules[r.RuleID]; ok {
 		if score, ok := sarif.SecuritySeverity(rule.Properties); ok {
 			return cvssToSeverity(score)
+		}
+		if sev, ok := tagSeverity(rule.Properties); ok {
+			return sev
 		}
 	}
 	return levelToSeverity(r.Level)
