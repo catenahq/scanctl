@@ -7,6 +7,9 @@ name: scanctl
 # pull_request or push introduces them; scanctl reads the commit to compare
 # with from the event.
 #
+# The caller's job must grant all three permissions below: GitHub refuses to
+# start a run whose called job asks for more than the caller granted.
+#
 # Caller example:
 #   jobs:
 #     security:
@@ -76,13 +79,40 @@ jobs:
         # uv backs the Python scanners (semgrep, guarddog), lazy-fetched at scan time.
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Install scanctl
+        # A scanctl branch named like the caller's (a pull request's head, then
+        # its base) wins over scanctl-version, so a scanctl change runs against
+        # each caller's branch of the same name before it merges. It installs
+        # by commit: a branch name is not always a valid Go version query.
         env:
           SCANCTL_VERSION: ${{ inputs.scanctl-version }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
           # Resolve catenahq modules straight from git, not proxy.golang.org:
           # the proxy caches branch resolution (~30 min), so @main could
           # install a scanctl OLDER than the workflow that invokes it.
           GOPRIVATE: github.com/catenahq/*
-        run: go install "github.com/catenahq/scanctl/cmd/scanctl@${SCANCTL_VERSION}"
+        run: |
+          set -euo pipefail
+          candidates=()
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = pull_request_target ]; then
+            candidates=("$HEAD_REF" "$BASE_REF")
+          elif [ "$REF_TYPE" = branch ]; then
+            candidates=("$REF_NAME")
+          fi
+          version="$SCANCTL_VERSION"
+          for b in "${candidates[@]}"; do
+            [ -n "$b" ] || continue
+            sha="$(git ls-remote https://github.com/catenahq/scanctl.git "refs/heads/$b" | cut -f1)"
+            if [ -n "$sha" ]; then
+              version="$sha"
+              echo "scanctl from its $b branch at $sha"
+              break
+            fi
+          done
+          go install "github.com/catenahq/scanctl/cmd/scanctl@${version}"
       - name: Run scanctl
         env:
           # zizmor's API-backed audits use this when present; absent = it runs --offline.

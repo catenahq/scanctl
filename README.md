@@ -299,7 +299,11 @@ comment (updated in place) and (b) uploads `scanctl.sarif` + the SBOM as a
 downloadable artifact. Together with `--baseline` these give private repos the
 same triage surface as the public Security tab. Inputs: `baseline`,
 `dismiss-baseline`, `import-sarif`, `profile`, `no-gate`, `path`, `runner`,
-`scanctl-version`.
+`scanctl-version`. A scanctl branch named like the caller's branch (a pull
+request's head, then its base) takes precedence over `scanctl-version`, so a
+scanctl change runs against every caller's branch of the same name before it
+merges. The calling job must grant all three permissions above, or GitHub
+refuses to start the run.
 
 ## Layout
 
