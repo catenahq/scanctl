@@ -20,12 +20,12 @@ import (
 // fetched for the fs scan. It is skipped when neither is configured (only
 // repos that ship or pin images set them). Findings are tagged driver "trivy"
 // so they gate under trivy's mode, while the step is recorded as "trivy-image"
-// in out.Ran for visibility.
+// in out.Ran for visibility. A ref whose scan fails is retried once (registry
+// pulls fail transiently), then recorded in out.Failed.
 //
 // The returned error is reserved for a pin that resolves to nothing, which is
 // a defect in scanctl.yml rather than a scan that went wrong: an unresolvable
 // pin means an image silently goes unscanned and the run still reports clean.
-// Transient scan failures stay warnings, like every other step.
 func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, out *Outcome) error {
 	refs, err := resolveImageRefs(cfg, root)
 	if err != nil {
@@ -43,12 +43,14 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 	if err != nil {
 		out.Warnings = append(out.Warnings, err.Error())
 		out.Skipped["trivy-image"] = "unpinned"
+		out.fail(cfg, "trivy", "trivy-image", "unpinned in tools.lock")
 		return nil
 	}
 	bin, err := trivyEnsure(ctx, version)
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: fetch failed: %v", err))
 		out.Skipped["trivy-image"] = "fetch failed"
+		out.fail(cfg, "trivy", "trivy-image", "fetch failed")
 		return nil
 	}
 
@@ -56,33 +58,51 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 
 	ran := false
 	for _, ref := range refs {
-		outFile, err := os.CreateTemp("", "scanctl-trivy-image-*.sarif")
-		if err != nil {
-			out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: temp file: %v", err))
-			continue
+		merged, failure := scanImage(ctx, bin, ignore, ref, out)
+		if failure != "" {
+			out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: %s: %s; retrying once", ref, failure))
+			merged, failure = scanImage(ctx, bin, ignore, ref, out)
 		}
-		outPath := outFile.Name()
-		_ = outFile.Close()
-		args := []string{"image", "--quiet", "--format", "sarif",
-			"--ignore-unfixed", "--output", outPath}
-		if ignore != "" {
-			args = append(args, "--ignorefile", ignore)
-		}
-		args = append(args, ref)
-		// #nosec G204 -- bin is the pinned trivy; ref comes from the operator's
-		// scanctl.yml or from a pin pattern it declares over the repo's own files
-		cmd := exec.CommandContext(ctx, bin, args...)
-		merged := len(out.Report.Runs)
-		if mergeSARIFRun("trivy", cmd, outPath, false, out) {
+		if merged {
 			ran = true
-			tagImage(out.Report.Runs[merged:], ref)
 		}
-		_ = os.Remove(outPath)
+		if failure != "" {
+			out.fail(cfg, "trivy", ref, failure)
+		}
 	}
 	if ran {
 		out.Ran = append(out.Ran, "trivy-image")
 	}
 	return nil
+}
+
+// scanImage runs one trivy image scan of ref and merges its findings, tagged
+// with the image they came from. It returns whether a report merged and, when
+// the scan failed, why.
+func scanImage(ctx context.Context, bin, ignore, ref string, out *Outcome) (bool, string) {
+	outFile, err := os.CreateTemp("", "scanctl-trivy-image-*.sarif")
+	if err != nil {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: temp file: %v", err))
+		return false, err.Error()
+	}
+	outPath := outFile.Name()
+	_ = outFile.Close()
+	defer os.Remove(outPath)
+	args := []string{"image", "--quiet", "--format", "sarif",
+		"--ignore-unfixed", "--output", outPath}
+	if ignore != "" {
+		args = append(args, "--ignorefile", ignore)
+	}
+	args = append(args, ref)
+	// #nosec G204 -- bin is the pinned trivy; ref comes from the operator's
+	// scanctl.yml or from a pin pattern it declares over the repo's own files
+	cmd := exec.CommandContext(ctx, bin, args...)
+	merged := len(out.Report.Runs)
+	ok, failure := mergeSARIFRun("trivy", cmd, outPath, false, out)
+	if ok {
+		tagImage(out.Report.Runs[merged:], ref)
+	}
+	return ok, failure
 }
 
 // tagImage records on every result which image it came from. trivy's location

@@ -51,12 +51,14 @@ func guarddogStep(ctx context.Context, cfg config.Config, lock Lock, root string
 	if err != nil {
 		out.Warnings = append(out.Warnings, err.Error())
 		out.Skipped["guarddog"] = "unpinned"
+		out.fail(cfg, "guarddog", "guarddog", "unpinned in tools.lock")
 		return
 	}
 	bin, err := pyInstall(ctx, "guarddog", version, "guarddog")
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("guarddog: fetch failed: %v", err))
 		out.Skipped["guarddog"] = "fetch failed"
+		out.fail(cfg, "guarddog", "guarddog", "fetch failed")
 		return
 	}
 
@@ -65,6 +67,7 @@ func guarddogStep(ctx context.Context, cfg config.Config, lock Lock, root string
 		outFile, err := os.CreateTemp("", "scanctl-guarddog-*.sarif")
 		if err != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("guarddog: temp file: %v", err))
+			out.fail(cfg, "guarddog", "guarddog "+j.manifest, err.Error())
 			continue
 		}
 		outPath := outFile.Name()
@@ -73,8 +76,12 @@ func guarddogStep(ctx context.Context, cfg config.Config, lock Lock, root string
 		// the internal table, not user input
 		cmd := exec.CommandContext(ctx, bin, j.ecosystem, "verify", j.manifest, "--output-format", "sarif")
 		cmd.Dir = root
-		if mergeSARIFRun("guarddog", cmd, outPath, true, out) {
+		merged, failure := mergeSARIFRun("guarddog", cmd, outPath, true, out)
+		if merged {
 			ran = true
+		}
+		if failure != "" {
+			out.fail(cfg, "guarddog", "guarddog "+j.manifest, failure)
 		}
 		_ = os.Remove(outPath)
 	}

@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/catenahq/scanctl"
@@ -239,7 +240,7 @@ func runCmd(args []string) int {
 	uploadResults(ctx, cfg, *outPath)
 	sbomStep(ctx, cfg, lock, root, *sbomOut)
 
-	summary := report.Summary(out.Report, cfg) + staleSection(*baselinePath, stale)
+	summary := report.Summary(out.Report, cfg) + staleSection(*baselinePath, stale) + failedSection(out.Failed)
 	fmt.Print(summary)
 	fmt.Printf("\nran: %v\n", out.Ran)
 	if *summaryPath != "" {
@@ -250,16 +251,36 @@ func runCmd(args []string) int {
 	}
 
 	verdict := gate.Evaluate(out.Report, cfg)
-	fmt.Printf("gate: %d gating finding(s) of %d total (floor=%s)\n",
-		verdict.Gating, verdict.Total, cfg.Gate.Floor)
+	fmt.Printf("gate: %d gating finding(s) of %d total (floor=%s); %d blocking scan(s) did not run\n",
+		verdict.Gating, verdict.Total, cfg.Gate.Floor, len(out.Failed))
 
 	if *noGate {
 		return 0
 	}
-	if verdict.Failed() || len(stale) > 0 {
+	if verdict.Failed() || len(stale) > 0 || len(out.Failed) > 0 {
 		return 1
 	}
 	return 0
+}
+
+// failedSection lists the blocking scans that produced no report; "" when
+// every one ran.
+func failedSection(failed map[string]string) string {
+	if len(failed) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(failed))
+	for k := range failed {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n### Scanners that did not run (%d)\n\n", len(failed))
+	b.WriteString("Their findings would gate, and nothing looked for them, so the run fails. The warnings above say why.\n\n")
+	for _, k := range keys {
+		fmt.Fprintf(&b, "- %s: %s\n", k, failed[k])
+	}
+	return b.String()
 }
 
 // staleSection lists the committed baseline entries that match nothing in this

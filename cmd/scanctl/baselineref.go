@@ -57,6 +57,11 @@ func baselineRefSet(ctx context.Context, root, sha, cfgPath, profile string, cfg
 	for _, w := range out.Warnings {
 		fmt.Fprintln(os.Stderr, "warning: baseline-ref:", w)
 	}
+	// A base image that did not scan suppresses nothing, so its findings on
+	// HEAD gate: stricter, never looser.
+	for ref, why := range out.Failed {
+		fmt.Fprintf(os.Stderr, "warning: baseline-ref: %s not scanned (%s); its findings gate\n", ref, why)
+	}
 	// Both roots: a tool scanning the linked worktree may report paths under
 	// the MAIN checkout (it resolves the repo root through the shared gitdir),
 	// so worktree- and main-rooted URIs must both normalize away.

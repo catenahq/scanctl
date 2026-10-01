@@ -110,6 +110,53 @@ func TestRunToolFailureNoOutputWarns(t *testing.T) {
 	}
 }
 
+// fakeRegistry swaps the registry for one tool that exits 1 and writes
+// nothing, for the length of the test.
+func fakeRegistry(t *testing.T) {
+	t.Helper()
+	saved := registry
+	t.Cleanup(func() { registry = saved })
+	registry = []toolDef{{
+		name:    "fake",
+		applies: func(detect.Result) bool { return true },
+		ensure:  func(context.Context, string, string) (string, error) { return "/bin/false", nil },
+		invoke:  func(bin, root, out string, _ detect.Result) invocation { return invocation{} },
+	}}
+}
+
+// A blocking scanner that produced no report fails the run: a gate passing
+// without it would pass on findings nobody looked for. In report mode it
+// stays a warning.
+func TestABlockingScannerThatDoesNotRunIsFailed(t *testing.T) {
+	fakeRegistry(t)
+	lock := Lock{Tools: map[string]LockEntry{"fake": {Version: "1"}}}
+	for mode, want := range map[config.Mode]bool{config.ModeBlock: true, config.ModeReport: false} {
+		cfg := config.Config{Tools: map[string]config.ToolConfig{"fake": {Enabled: true, Mode: mode}}}
+		out, err := Run(context.Background(), t.TempDir(), cfg, lock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, got := out.Failed["fake"]; got != want {
+			t.Errorf("mode %s: Failed = %v, want fake listed: %v", mode, out.Failed, want)
+		}
+		if len(out.Warnings) == 0 {
+			t.Errorf("mode %s: no warning says why the scanner failed", mode)
+		}
+	}
+}
+
+func TestAnUnpinnedBlockingScannerIsFailed(t *testing.T) {
+	fakeRegistry(t)
+	cfg := config.Config{Tools: map[string]config.ToolConfig{"fake": {Enabled: true, Mode: config.ModeBlock}}}
+	out, err := Run(context.Background(), t.TempDir(), cfg, Lock{Tools: map[string]LockEntry{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Failed["fake"] == "" {
+		t.Errorf("Failed = %v, want the unpinned scanner listed", out.Failed)
+	}
+}
+
 func TestWithSkipsInjectsPerToolDirExcludes(t *testing.T) {
 	ignore := []string{"node_modules", ".venv"}
 

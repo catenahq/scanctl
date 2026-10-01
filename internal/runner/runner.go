@@ -22,17 +22,34 @@ type Outcome struct {
 	Ran      []string
 	Skipped  map[string]string // tool -> reason
 	Warnings []string
+	// Failed names each scan whose findings would block and that produced no
+	// report (tool, or image ref -> reason). A gate that passes without them
+	// would pass on findings nobody looked for, so the run fails on them.
+	Failed map[string]string
+}
+
+func newOutcome() *Outcome {
+	return &Outcome{Report: sarif.New(), Skipped: map[string]string{}, Failed: map[string]string{}}
+}
+
+// fail records that the scan named key produced no report. It fails the run
+// only when tool's findings would block; a report-mode scan stays a warning.
+func (o *Outcome) fail(cfg config.Config, tool, key, reason string) {
+	if cfg.Tools[tool].Mode == config.ModeBlock {
+		o.Failed[key] = reason
+	}
 }
 
 // Run detects, fetches, and executes the enabled+applicable tools, returning a
-// merged report. A single tool failing is a warning, not a fatal error: a
-// partial scan is more useful than none (robustness over strictness).
+// merged report. A tool that fails is recorded with its reason and the run
+// carries on, so one broken scanner does not hide what the others found;
+// Failed then fails the run for every blocking scan among them.
 func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outcome, error) {
 	det, err := detect.Detect(root, cfg.Ignore)
 	if err != nil {
 		return nil, fmt.Errorf("detect: %w", err)
 	}
-	out := &Outcome{Report: sarif.New(), Skipped: map[string]string{}}
+	out := newOutcome()
 
 	for _, td := range registry {
 		tc, configured := cfg.Tools[td.name]
@@ -52,12 +69,14 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 		if err != nil {
 			out.Warnings = append(out.Warnings, err.Error())
 			out.Skipped[td.name] = "unpinned"
+			out.fail(cfg, td.name, td.name, "unpinned in tools.lock")
 			continue
 		}
 		bin, err := td.ensure(ctx, version, root)
 		if err != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: fetch failed: %v", td.name, err))
 			out.Skipped[td.name] = "fetch failed"
+			out.fail(cfg, td.name, td.name, "fetch failed")
 			continue
 		}
 		rep, warn := runTool(ctx, td, bin, root, det, cfg.Ignore)
@@ -66,6 +85,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 		}
 		if rep == nil {
 			out.Skipped[td.name] = "no output"
+			out.fail(cfg, td.name, td.name, "exited non-zero without a report")
 			continue
 		}
 		tagDriver(rep, td.name)
@@ -74,11 +94,10 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 	}
 
 	// Steps whose shape the detect-driven registry does not fit (per-manifest,
-	// per-image) run after the loop and merge into the same report. Like
-	// runTool, a failure is a warning, never fatal (robustness over strictness).
-	// imageStep is the one exception, and only for an image_pins entry that
-	// resolves to nothing: that is a broken config, and letting it pass would
-	// report a clean run for an image nothing scanned.
+	// per-image) run after the loop and merge into the same report, recording
+	// their failures the same way. imageStep returns an error only for an
+	// image_pins entry that resolves to nothing: that is a broken config, not a
+	// scan that went wrong.
 	guarddogStep(ctx, cfg, lock, root, out)
 	licenseStep(ctx, cfg, lock, root, out)
 	if err := imageStep(ctx, cfg, lock, root, out); err != nil {
@@ -91,7 +110,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 // ScanImages runs only the image scan of cfg's images and image pins under
 // root: the half of a run a base-commit diff compares.
 func ScanImages(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outcome, error) {
-	out := &Outcome{Report: sarif.New(), Skipped: map[string]string{}}
+	out := newOutcome()
 	if err := imageStep(ctx, cfg, lock, root, out); err != nil {
 		return nil, err
 	}
@@ -200,18 +219,19 @@ func withSkips(name string, args, ignore []string) []string {
 
 // mergeSARIFRun executes cmd for a non-registry step, reads SARIF from outPath
 // (or from stdout when stdoutToOut), tags it driver=driver, and merges it into
-// out.Report. A failure is recorded as a warning, never fatal (same robustness
-// contract as runTool). It returns whether a report merged, so the caller can
-// record the step in out.Ran exactly once. driver controls gate mapping: image
-// findings are tagged "trivy" so they inherit trivy's block/report mode.
-func mergeSARIFRun(driver string, cmd *exec.Cmd, outPath string, stdoutToOut bool, out *Outcome) bool {
+// out.Report. It returns whether a report merged, so the caller can record the
+// step in out.Ran exactly once, and a failure reason when the command exited
+// non-zero without one (recorded as a warning too; the caller decides whether
+// it fails the run). driver controls gate mapping: image findings are tagged
+// "trivy" so they inherit trivy's block/report mode.
+func mergeSARIFRun(driver string, cmd *exec.Cmd, outPath string, stdoutToOut bool, out *Outcome) (bool, string) {
 	var runErr error
 	var diag string
 	if stdoutToOut {
 		f, err := os.Create(outPath) // #nosec G304 -- outPath is our own CreateTemp file
 		if err != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: %v", driver, err))
-			return false
+			return false, err.Error()
 		}
 		cmd.Stdout = f
 		diag, runErr = captureStderr(cmd)
@@ -225,12 +245,13 @@ func mergeSARIFRun(driver string, cmd *exec.Cmd, outPath string, stdoutToOut boo
 	if rep == nil {
 		if runErr != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: no SARIF produced: %v\n%s", driver, runErr, diag))
+			return false, "exited non-zero without a report"
 		}
-		return false
+		return false, ""
 	}
 	tagDriver(rep, driver)
 	out.Report.Merge(rep)
-	return true
+	return true, ""
 }
 
 // trivyEnsure returns the pinned trivy binary, reusing the registry entry's

@@ -82,7 +82,11 @@ scanctl run --import codeql.sarif .                 # fold in external SARIF
 ```
 
 Exit code is non-zero when a tool in `block` mode produces a finding at or above
-the configured gate floor. The floor is compared against each finding's CVSS
+the configured gate floor, or when a `block`-mode scan produces no report at all
+(unpinned, fetch failed, or exited non-zero without one; an image scan is
+retried once first). Zero findings from a scanner that never ran is not a pass:
+the summary lists those scans under "Scanners that did not run", and the run
+carries on so the other scanners' findings still reach the report. The floor is compared against each finding's CVSS
 `security-severity` when the tool reports one (the same score GitHub uses),
 falling back to the SARIF level -- so the floor means what it says rather than
 over- or under-gating on a coarse error/warning. gitleaks reports no severity;

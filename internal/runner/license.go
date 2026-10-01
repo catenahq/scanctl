@@ -26,17 +26,20 @@ func licenseStep(ctx context.Context, cfg config.Config, lock Lock, root string,
 	if err != nil {
 		out.Warnings = append(out.Warnings, err.Error())
 		out.Skipped["trivy-license"] = "unpinned"
+		out.fail(cfg, "trivy-license", "trivy-license", "unpinned in tools.lock")
 		return
 	}
 	bin, err := trivyEnsure(ctx, version)
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-license: fetch failed: %v", err))
 		out.Skipped["trivy-license"] = "fetch failed"
+		out.fail(cfg, "trivy-license", "trivy-license", "fetch failed")
 		return
 	}
 	outFile, err := os.CreateTemp("", "scanctl-trivy-license-*.sarif")
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-license: temp file: %v", err))
+		out.fail(cfg, "trivy-license", "trivy-license", err.Error())
 		return
 	}
 	outPath := outFile.Name()
@@ -55,7 +58,11 @@ func licenseStep(ctx context.Context, cfg config.Config, lock Lock, root string,
 	// #nosec G204 -- bin is the pinned trivy; args are fixed flags + reviewed
 	// license ids from scanctl.yml; root is the scan target path
 	cmd := exec.CommandContext(ctx, bin, args...)
-	if mergeSARIFRun("trivy-license", cmd, outPath, false, out) {
+	merged, failure := mergeSARIFRun("trivy-license", cmd, outPath, false, out)
+	if merged {
 		out.Ran = append(out.Ran, "trivy-license")
+	}
+	if failure != "" {
+		out.fail(cfg, "trivy-license", "trivy-license", failure)
 	}
 }
