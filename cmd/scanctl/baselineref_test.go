@@ -149,6 +149,66 @@ func TestPreresolveBasePinsDropsAPinTheBaseBranchDoesNotHave(t *testing.T) {
 	}
 }
 
+// actionsEvent sets the GitHub Actions environment for one event, with a push
+// payload when before or defaultBranch is set.
+func actionsEvent(t *testing.T, event, baseRef, before, defaultBranch string) {
+	t.Helper()
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_EVENT_NAME", event)
+	t.Setenv("GITHUB_BASE_REF", baseRef)
+	path := filepath.Join(t.TempDir(), "event.json")
+	body := `{"before":"` + before + `","repository":{"default_branch":"` + defaultBranch + `"}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITHUB_EVENT_PATH", path)
+}
+
+func TestResolveBaseRefFollowsTheEvent(t *testing.T) {
+	root, sha := gitRepo(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name, event, baseRef, before string
+		want                         string
+		reportOnly                   bool
+	}{
+		{"a pull request compares with its target", "pull_request", "dev", "", "origin/dev", false},
+		{"a push compares with the commit before it", "push", "", sha, sha, false},
+		{"a push that created the branch compares with the default branch", "push", "", "0000000000000000000000000000000000000000", "origin/main", false},
+		{"a force push past a missing commit compares with the default branch", "push", "", "1111111111111111111111111111111111111111", "origin/main", false},
+		{"a scheduled run reports", "schedule", "", "", "", true},
+		{"a manual run reports", "workflow_dispatch", "", "", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			actionsEvent(t, tc.event, tc.baseRef, tc.before, "main")
+			ref, reportOnly := resolveBaseRef(ctx, root, "")
+			if ref != tc.want || reportOnly != tc.reportOnly {
+				t.Errorf("resolveBaseRef = %q,%v want %q,%v", ref, reportOnly, tc.want, tc.reportOnly)
+			}
+		})
+	}
+}
+
+func TestResolveBaseRefHonoursAnExplicitFlag(t *testing.T) {
+	root, _ := gitRepo(t)
+	actionsEvent(t, "schedule", "", "", "main")
+	if ref, reportOnly := resolveBaseRef(context.Background(), root, "origin/dev"); ref != "origin/dev" || reportOnly {
+		t.Errorf("explicit ref = %q,%v want origin/dev,false", ref, reportOnly)
+	}
+	if ref, reportOnly := resolveBaseRef(context.Background(), root, "none"); ref != "" || reportOnly {
+		t.Errorf(`"none" = %q,%v want no diff and the full gate`, ref, reportOnly)
+	}
+}
+
+// A local run is a full report: there is no event to read a base from.
+func TestResolveBaseRefOutsideActionsComparesWithNothing(t *testing.T) {
+	root, _ := gitRepo(t)
+	t.Setenv("GITHUB_ACTIONS", "")
+	if ref, reportOnly := resolveBaseRef(context.Background(), root, ""); ref != "" || reportOnly {
+		t.Errorf("local run = %q,%v want no diff and the full gate", ref, reportOnly)
+	}
+}
+
 func TestPreresolveBasePinsKeepsLiteralImages(t *testing.T) {
 	root, _ := gitRepo(t)
 	got := preresolveBasePins(

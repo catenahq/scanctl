@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,8 +17,7 @@ import (
 // baselineRefSet scans the merge-base of HEAD and ref in a temporary git
 // worktree and returns its findings' fingerprint set. Everything already
 // present there is suppressed (kind: external), so only findings the change
-// INTRODUCES gate. CI passes the pull request's target branch, or on a push the
-// commit the branch held before it.
+// INTRODUCES gate. resolveBaseRef picks ref.
 //
 // cfgPath and profile are what main parsed, so the baseline scan can re-read
 // the config from the worktree: settings that name things OUTSIDE the tree --
@@ -55,6 +55,64 @@ func baselineRefSet(ctx context.Context, root, sha, cfgPath, profile string, cfg
 	// the MAIN checkout (it resolves the repo root through the shared gitdir),
 	// so worktree- and main-rooted URIs must both normalize away.
 	return baseline.FromReport(out.Report, absPath(dir), absPath(root)), nil
+}
+
+// resolveBaseRef decides what a run is compared against. An explicit
+// -baseline-ref wins, and "none" turns the diff off. Left empty inside GitHub
+// Actions, the ref is read from the event: a pull request is compared with its
+// target branch, a push with the commit the branch held before it, or with the
+// default branch when that commit is not in the clone (the push created the
+// branch, or force-pushed past it). A scheduled or manual run has no change to
+// grade, so it is compared with nothing and reportOnly is set. Outside Actions
+// an empty flag compares with nothing and gates on every finding.
+func resolveBaseRef(ctx context.Context, root, flag string) (ref string, reportOnly bool) {
+	switch flag {
+	case "none":
+		return "", false
+	case "":
+	default:
+		return flag, false
+	}
+	if os.Getenv("GITHUB_ACTIONS") != "true" {
+		return "", false
+	}
+	switch os.Getenv("GITHUB_EVENT_NAME") {
+	case "pull_request", "pull_request_target":
+		if base := os.Getenv("GITHUB_BASE_REF"); base != "" {
+			return "origin/" + base, false
+		}
+	case "push":
+		ev := readPushEvent(os.Getenv("GITHUB_EVENT_PATH"))
+		if ev.Before != "" {
+			if _, err := gitOut(ctx, root, "cat-file", "-e", ev.Before+"^{commit}"); err == nil {
+				return ev.Before, false
+			}
+		}
+		if ev.Repository.DefaultBranch != "" {
+			return "origin/" + ev.Repository.DefaultBranch, false
+		}
+	case "schedule", "workflow_dispatch":
+		return "", true
+	}
+	return "", false
+}
+
+// pushEvent is the part of a GitHub push event payload resolveBaseRef reads.
+type pushEvent struct {
+	Before     string `json:"before"`
+	Repository struct {
+		DefaultBranch string `json:"default_branch"`
+	} `json:"repository"`
+}
+
+// readPushEvent loads the event payload at path; an unreadable one is empty,
+// which resolves to no diff and the full gate.
+func readPushEvent(path string) pushEvent {
+	var ev pushEvent
+	if data, err := os.ReadFile(path); err == nil { // #nosec G304 -- GITHUB_EVENT_PATH, set by the Actions runner
+		_ = json.Unmarshal(data, &ev)
+	}
+	return ev
 }
 
 // mergeBase resolves the merge-base of HEAD and ref.

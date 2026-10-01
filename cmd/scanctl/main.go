@@ -76,10 +76,13 @@ run flags:
                    GH_TOKEN/GITHUB_TOKEN (set by Actions); a no-op elsewhere.
                    Ignored unless -baseline is also set.
   -baseline-ref string
-                   git ref (e.g. origin/main, or the commit before a push); the
-                   merge-base of HEAD and it is scanned in a temp worktree and
-                   its findings are suppressed, so only findings the change
-                   introduces gate
+                   git ref (e.g. origin/main); the merge-base of HEAD and it is
+                   scanned in a temp worktree and its findings are suppressed,
+                   so only findings the change introduces gate. Empty inside
+                   GitHub Actions: read from the event (pull request: its
+                   target branch; push: the commit before it; schedule or
+                   workflow_dispatch: no diff, report without gating). Empty
+                   elsewhere, or "none": no diff, every finding gates
   -import string   fold an external SARIF file (e.g. CodeQL) into the merge;
                    repeatable
   -no-gate         scan and report but always exit 0
@@ -133,9 +136,14 @@ func runCmd(args []string) int {
 	// what the change touches is what lets the image pins be narrowed to it,
 	// and both sides of the diff have to be narrowed the same way or the
 	// baseline stops lining up with the report it is suppressing against.
+	baseRef, reportOnly := resolveBaseRef(context.Background(), root, *baselineRef)
+	if reportOnly {
+		fmt.Printf("%s run: no change to grade, reporting without gating\n", os.Getenv("GITHUB_EVENT_NAME"))
+	}
 	baseSha := ""
-	if *baselineRef != "" {
-		sha, err := mergeBase(context.Background(), root, *baselineRef)
+	if baseRef != "" {
+		fmt.Printf("baseline-ref: comparing with %s\n", baseRef)
+		sha, err := mergeBase(context.Background(), root, baseRef)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "warning: baseline-ref:", err)
 		} else {
@@ -232,7 +240,7 @@ func runCmd(args []string) int {
 	fmt.Printf("gate: %d gating finding(s) of %d total (floor=%s)\n",
 		verdict.Gating, verdict.Total, cfg.Gate.Floor)
 
-	if *noGate {
+	if *noGate || reportOnly {
 		return 0
 	}
 	if verdict.Failed() {

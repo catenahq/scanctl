@@ -91,13 +91,15 @@ findings the change INTRODUCES gate. Both sides are scanned in the same run
 with the same scanner versions and vulnerability database. A failed scan of
 the base degrades to the full gate (stricter, never looser) with a warning.
 
-The reusable workflow picks the ref from the event: a pull request diffs
-against `origin/<base>`, a push against the commit the branch held before it
-(or the default branch, when the push created the branch or that commit is not
-in the clone). A scheduled or manual run has no change to grade, so it scans
-and reports without gating; that is where a CVE published against code nobody
-touched surfaces. `no-baseline-ref: true` turns the diff off and gates on every
-finding.
+Inside GitHub Actions, with no `--baseline-ref` given, scanctl reads the ref
+from the event: a pull request diffs against `origin/<base>`, a push against
+the commit the branch held before it (or the default branch, when the push
+created the branch or that commit is not in the clone). A scheduled or manual
+run has no change to grade, so it scans and reports without gating; that is
+where a CVE published against code nobody touched surfaces. Every caller, the
+reusable workflow or an inline `scanctl run`, gets the same behaviour.
+`--baseline-ref none` (the reusable workflow's `no-baseline-ref: true`) turns
+the diff off and gates on every finding, as does a run outside Actions.
 
 A dependency vulnerability (trivy, osv-scanner) is matched across the two
 scans by advisory, package, and where the package sits: the image repository
