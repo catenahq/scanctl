@@ -62,6 +62,46 @@ func TestGitleaksRunsWithTheBundledConfig(t *testing.T) {
 	}
 }
 
+// gitleaks has no dir-exclude flag, so the ignore globs reach it as a config
+// that extends the one it would have run with and allowlists each directory.
+func TestGitleaksHonoursTheIgnoreGlobs(t *testing.T) {
+	t.Setenv("SCANCTL_CACHE", t.TempDir())
+	base := filepath.Join(t.TempDir(), "base.toml")
+	args := withSkips("gitleaks", []string{"detect", "--config", base, "--log-opts=HEAD"},
+		[]string{"ansible_collections", ".venv"})
+	cfg := args[2]
+	if cfg == base {
+		t.Fatal("--config still names the base config")
+	}
+	got, err := os.ReadFile(cfg) // #nosec G304 -- path is under our temp cache
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"path = \"" + base + "\"",
+		"[[allowlists]]",
+		"'''(^|/)ansible_collections(/|$)'''",
+		"'''(^|/)\\.venv(/|$)'''",
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("generated config lacks %s:\n%s", want, got)
+		}
+	}
+	if args[len(args)-1] != "--log-opts=HEAD" {
+		t.Errorf("argv reordered: %v", args)
+	}
+}
+
+// Two repos sharing one cache each keep their own generated config.
+func TestGitleaksIgnoreConfigIsNamedForItsContent(t *testing.T) {
+	t.Setenv("SCANCTL_CACHE", t.TempDir())
+	a := gitleaksIgnoreConfig("/repo-a/.gitleaks.toml", []string{"vendor"})
+	b := gitleaksIgnoreConfig("/repo-b/.gitleaks.toml", []string{"vendor"})
+	if a == "" || a == b {
+		t.Errorf("configs %q and %q collide", a, b)
+	}
+}
+
 // A repo that carries its own .gitleaks.toml keeps it.
 func TestGitleaksPrefersTheRepoConfig(t *testing.T) {
 	root := t.TempDir()

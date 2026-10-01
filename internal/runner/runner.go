@@ -152,18 +152,29 @@ func runTool(ctx context.Context, td toolDef, bin, root string, det detect.Resul
 // already honors `ignore`, but trivy's misconfig/secret pass, gosec, and
 // semgrep traverse the filesystem independently and would otherwise flag a
 // Dockerfile shipped inside node_modules or a test .go file inside a vendored
-// collection. Tools without a dir-exclude flag (osv-scanner reads lockfiles,
-// govulncheck reasons over Go packages, zizmor audits a single workflow dir,
-// gitleaks is config-driven) are passed through unchanged.
+// collection. gitleaks takes no flag: its --config is swapped for one that
+// extends it with a path allowlist. Tools without a dir-exclude flag
+// (osv-scanner reads lockfiles, govulncheck reasons over Go packages, zizmor
+// audits a single workflow dir) are passed through unchanged.
 //
-// Each skip is inserted immediately before the final positional argument (the
-// scan target / `./...`), which is the correct slot for all three tools.
+// Each skip flag is inserted immediately before the final positional argument
+// (the scan target / `./...`), which is the correct slot for all three tools.
 func withSkips(name string, args, ignore []string) []string {
 	if len(ignore) == 0 || len(args) == 0 {
 		return args
 	}
 	var skip []string
 	switch name {
+	case "gitleaks":
+		out := append([]string(nil), args...)
+		for i, a := range out {
+			if a == "--config" && i+1 < len(out) {
+				if cfg := gitleaksIgnoreConfig(out[i+1], ignore); cfg != "" {
+					out[i+1] = cfg
+				}
+			}
+		}
+		return out
 	case "trivy":
 		for _, d := range ignore {
 			skip = append(skip, "--skip-dirs", "**/"+d)
