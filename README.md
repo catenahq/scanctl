@@ -101,6 +101,11 @@ a SAST finding, a secret, a workflow or IaC finding, a malicious package --
 is fixable by a change to the repo, so it gates on every run, whether or not
 it was already there.
 
+An image the repo builds itself is the repo's to fix too. `--own-image <ref>`
+(repeatable) scans it with the other images, and its CVEs gate on every run:
+no base scan suppresses them. It is a flag rather than config because the ref
+exists only once the workflow has built it.
+
 A CVE in a third-party image the repo pins (`images:` / `image_pins:`) is
 upstream's to fix, so it gates only when a change introduces it.
 `--baseline-ref <git-ref>` also scans the images pinned at the merge-base of

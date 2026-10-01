@@ -141,6 +141,18 @@ func TestFingerprintIgnoresTheInImagePath(t *testing.T) {
 	}
 }
 
+// An image the repo builds and a third-party image of the same name carrying
+// the same advisory in the same package are two vulnerabilities: one must
+// never suppress the other.
+func TestFingerprintSeparatesAnOwnImageFromAThirdPartyOne(t *testing.T) {
+	third := trivyVuln("CVE-1", "stdlib", "1.26.4", "usr/bin/restic", "catena-admin:ci")
+	own := trivyVuln("CVE-1", "stdlib", "1.26.4", "usr/bin/restic", "")
+	own.Properties = map[string]any{OwnImageProperty: "catena-admin:ci"}
+	if Fingerprint("trivy", third) == Fingerprint("trivy", own) {
+		t.Error("an own-image finding shares a fingerprint with a third-party image finding")
+	}
+}
+
 func TestFingerprintSeparatesVulnsByAdvisoryPackageAndImage(t *testing.T) {
 	base := trivyVuln("CVE-1", "libssl3", "3.5.7-r0", "a/a", "a/a:1")
 	for name, other := range map[string]Result{

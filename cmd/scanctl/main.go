@@ -85,6 +85,10 @@ run flags:
                    Actions: read from the event (pull request: its target
                    branch; push: the commit before it). With no ref, image
                    findings are reported, not gated
+  -own-image string
+                   an image this repo builds (e.g. the tag the workflow's
+                   docker build produced); scanned like images, but its
+                   CVEs gate on every run, like the tree's; repeatable
   -import string   fold an external SARIF file (e.g. CodeQL) into the merge;
                    repeatable
   -no-gate         scan and report but always exit 0
@@ -106,8 +110,9 @@ func runCmd(args []string) int {
 	baselinePath := fs.String("baseline", "", "")
 	dismissBaseline := fs.Bool("dismiss-baseline", false, "")
 	baselineRef := fs.String("baseline-ref", "", "")
-	var imports multiFlag
+	var imports, ownImages multiFlag
 	fs.Var(&imports, "import", "")
+	fs.Var(&ownImages, "own-image", "")
 	_ = fs.Parse(args)
 
 	root := "."
@@ -127,6 +132,7 @@ func runCmd(args []string) int {
 		}
 		cfg.Profile = *profile
 	}
+	cfg.OwnImages = ownImages
 
 	lock, err := loadLock(*lockPath)
 	if err != nil {

@@ -48,6 +48,8 @@ func baselineRefSet(ctx context.Context, root, sha, cfgPath, profile string, cfg
 	}()
 
 	base := worktreeConfig(cfgPath, profile, root, dir, cfg)
+	// The repo's own images exist only as built from HEAD and gate whole.
+	base.OwnImages = nil
 	base = scopeImagePins(ctx, base, root, sha)
 	base = preresolveBasePins(base, dir)
 	out, err := runner.ScanImages(ctx, dir, base, lock)

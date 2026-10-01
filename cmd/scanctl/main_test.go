@@ -48,6 +48,22 @@ func TestAScanThatDoesNotRunFailsTheGate(t *testing.T) {
 	}
 }
 
+// -own-image reaches the image step: with trivy unpinned, the image scan is a
+// second blocking scan that did not run.
+func TestOwnImageIsScanned(t *testing.T) {
+	root, args := unrunnableScan(t)
+	if code := runCmd(append(append(args, "-own-image", "catena-admin:ci"), root)); code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	summary, err := os.ReadFile(args[len(args)-1]) // #nosec G304 -- path is under our temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(summary), "- trivy-image: unpinned in tools.lock") {
+		t.Errorf("summary does not list the own-image scan:\n%s", summary)
+	}
+}
+
 func TestNoGateStillExitsZero(t *testing.T) {
 	root, args := unrunnableScan(t)
 	if code := runCmd(append(append(args, "-no-gate"), root)); code != 0 {

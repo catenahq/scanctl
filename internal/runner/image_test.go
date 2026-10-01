@@ -269,7 +269,7 @@ func TestTagImageNamesTheImageOnEveryResult(t *testing.T) {
 		{RuleID: "CVE-1"},
 		{RuleID: "CVE-2", Properties: map[string]any{"k": "v"}},
 	}}}
-	tagImage(runs, "postgres:18.6-alpine")
+	tagImage(runs, sarif.ImageProperty, "postgres:18.6-alpine")
 	for _, r := range runs[0].Results {
 		if r.Properties[sarif.ImageProperty] != "postgres:18.6-alpine" {
 			t.Errorf("%s: image = %v, want postgres:18.6-alpine", r.RuleID, r.Properties[sarif.ImageProperty])

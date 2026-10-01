@@ -16,11 +16,13 @@ import (
 )
 
 // imageStep scans each container image ref in cfg.Images -- plus every ref
-// resolved out of cfg.ImagePins -- with trivy, reusing the pinned trivy binary
-// fetched for the fs scan. It is skipped when neither is configured (only
-// repos that ship or pin images set them). Findings are tagged driver "trivy"
-// so they gate under trivy's mode, while the step is recorded as "trivy-image"
-// in out.Ran for visibility. A ref whose scan fails is retried once (registry
+// resolved out of cfg.ImagePins, and each of cfg.OwnImages -- with trivy,
+// reusing the pinned trivy binary fetched for the fs scan. It is skipped when
+// none is configured (only repos that ship, build or pin images set them).
+// Findings are tagged driver "trivy" so they gate under trivy's mode, while
+// the step is recorded as "trivy-image" in out.Ran for visibility. Each
+// finding records its image under ImageProperty, or OwnImageProperty for an
+// image the repo builds. A ref whose scan fails is retried once (registry
 // pulls fail transiently), then recorded in out.Failed.
 //
 // The returned error is reserved for a pin that resolves to nothing, which is
@@ -31,7 +33,15 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 	if err != nil {
 		return err
 	}
-	if len(refs) == 0 {
+	type job struct{ ref, prop string }
+	var jobs []job
+	for _, ref := range refs {
+		jobs = append(jobs, job{ref, sarif.ImageProperty})
+	}
+	for _, ref := range cfg.OwnImages {
+		jobs = append(jobs, job{ref, sarif.OwnImageProperty})
+	}
+	if len(jobs) == 0 {
 		return nil
 	}
 	tc, ok := cfg.Tools["trivy"]
@@ -57,17 +67,17 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 	ignore := trivyIgnoreFile(root)
 
 	ran := false
-	for _, ref := range refs {
-		merged, failure := scanImage(ctx, bin, ignore, ref, out)
+	for _, j := range jobs {
+		merged, failure := scanImage(ctx, bin, ignore, j.ref, j.prop, out)
 		if failure != "" {
-			out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: %s: %s; retrying once", ref, failure))
-			merged, failure = scanImage(ctx, bin, ignore, ref, out)
+			out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: %s: %s; retrying once", j.ref, failure))
+			merged, failure = scanImage(ctx, bin, ignore, j.ref, j.prop, out)
 		}
 		if merged {
 			ran = true
 		}
 		if failure != "" {
-			out.fail(cfg, "trivy", ref, failure)
+			out.fail(cfg, "trivy", j.ref, failure)
 		}
 	}
 	if ran {
@@ -76,10 +86,10 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 	return nil
 }
 
-// scanImage runs one trivy image scan of ref and merges its findings, tagged
-// with the image they came from. It returns whether a report merged and, when
+// scanImage runs one trivy image scan of ref and merges its findings, each
+// naming its image under prop. It returns whether a report merged and, when
 // the scan failed, why.
-func scanImage(ctx context.Context, bin, ignore, ref string, out *Outcome) (bool, string) {
+func scanImage(ctx context.Context, bin, ignore, ref, prop string, out *Outcome) (bool, string) {
 	outFile, err := os.CreateTemp("", "scanctl-trivy-image-*.sarif")
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: temp file: %v", err))
@@ -100,23 +110,24 @@ func scanImage(ctx context.Context, bin, ignore, ref string, out *Outcome) (bool
 	merged := len(out.Report.Runs)
 	ok, failure := mergeSARIFRun("trivy", cmd, outPath, false, out)
 	if ok {
-		tagImage(out.Report.Runs[merged:], ref)
+		tagImage(out.Report.Runs[merged:], prop, ref)
 	}
 	return ok, failure
 }
 
-// tagImage records on every result which image it came from. trivy's location
-// is a path inside the image, which neither names the image nor stays put
-// across a bump (a jar is named for its version), so this property is what
-// matches a finding to the same image on both sides of a diff.
-func tagImage(runs []sarif.Run, ref string) {
+// tagImage records on every result, under prop, which image it came from.
+// trivy's location is a path inside the image, which neither names the image
+// nor stays put across a bump (a jar is named for its version), so this
+// property is what matches a finding to the same image on both sides of a
+// diff.
+func tagImage(runs []sarif.Run, prop, ref string) {
 	for i := range runs {
 		for j := range runs[i].Results {
 			r := &runs[i].Results[j]
 			if r.Properties == nil {
 				r.Properties = map[string]any{}
 			}
-			r.Properties[sarif.ImageProperty] = ref
+			r.Properties[prop] = ref
 		}
 	}
 }

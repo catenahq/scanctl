@@ -87,12 +87,14 @@ func Apply(rep *sarif.Report, base Set) int {
 // ApplyRoot suppresses the results the base-commit scan already had (kind:
 // external, PresentBefore), with the same root normalization as FromReport:
 // base must have been built with FromReport and the same roots for the
-// fingerprints to line up.
+// fingerprints to line up. A finding in an image the repo builds itself is
+// never suppressed this way: the repo can fix it, so it gates on every run.
 func ApplyRoot(rep *sarif.Report, base Set, roots ...string) int {
 	return apply(rep, base, sarif.PresentBefore, roots...)
 }
 
 func apply(rep *sarif.Report, base Set, why string, roots ...string) int {
+	ownImagesGate := why == sarif.PresentBefore
 	if len(base) == 0 {
 		return 0
 	}
@@ -106,6 +108,9 @@ func apply(rep *sarif.Report, base Set, why string, roots ...string) int {
 		for i := range rep.Runs[ri].Results {
 			r := &rep.Runs[ri].Results[i]
 			if r.Suppressed() {
+				continue
+			}
+			if _, own := r.Properties[sarif.OwnImageProperty]; own && ownImagesGate {
 				continue
 			}
 			if fp := fingerprintRoot(tool, *r, roots); left[fp] > 0 {

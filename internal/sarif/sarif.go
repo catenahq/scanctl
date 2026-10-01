@@ -148,9 +148,14 @@ func Fingerprint(tool string, r Result) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ImageProperty is the result property naming the container image an image-scan
-// finding came from (the full ref, tag included).
+// ImageProperty is the result property naming the third-party container image
+// an image-scan finding came from (the full ref, tag included).
 const ImageProperty = "image"
+
+// OwnImageProperty names, instead, an image the repo builds itself (the
+// -own-image flag). Its findings are fixable by a change to the repo, so no
+// base-commit scan suppresses them.
+const OwnImageProperty = "ownImage"
 
 // vulnIdentity names a dependency vulnerability by advisory, package, and where
 // the package sits: the image repository for an image-scan finding, the
@@ -169,6 +174,9 @@ func vulnIdentity(tool string, r Result) (string, bool) {
 	}
 	if img, ok := r.Properties[ImageProperty].(string); ok && img != "" {
 		where = "image:" + ImageRepo(img)
+	}
+	if img, ok := r.Properties[OwnImageProperty].(string); ok && img != "" {
+		where = "own-image:" + ImageRepo(img)
 	}
 	return tool + "\x00" + r.RuleID + "\x00" + pkg + "\x00" + where, true
 }

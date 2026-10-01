@@ -37,6 +37,23 @@ func TestApplySuppressesKnownNotNew(t *testing.T) {
 	}
 }
 
+// A CVE in an image the repo builds is the repo's to fix: the base commit
+// having had it does not stop it gating.
+func TestApplyRootNeverSuppressesAnOwnImageFinding(t *testing.T) {
+	own := func() *sarif.Report {
+		run := mk("trivy", "CVE-1", "usr/bin/restic", 1)
+		run.Results[0].Properties = map[string]any{sarif.OwnImageProperty: "catena-admin:ci"}
+		return &sarif.Report{Runs: []sarif.Run{run}}
+	}
+	cur := own()
+	if n := ApplyRoot(cur, FromReport(own(), "/repo"), "/repo"); n != 0 {
+		t.Errorf("suppressed = %d, want 0", n)
+	}
+	if cur.Runs[0].Results[0].Suppressed() {
+		t.Error("own-image finding suppressed as present before the change")
+	}
+}
+
 func TestEmptyBaselineIsNoop(t *testing.T) {
 	cur := &sarif.Report{Runs: []sarif.Run{mk("gosec", "G304", "a.go", 5)}}
 	if n := Apply(cur, Set{}); n != 0 {

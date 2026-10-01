@@ -71,6 +71,10 @@ type Config struct {
 	// ImagePins read the refs to scan out of the repo's own source files, so a
 	// pin is scanned where it is declared rather than copied into this config.
 	ImagePins []ImagePin `yaml:"image_pins"`
+	// OwnImages are images the repo builds itself, set by the -own-image flag
+	// (the ref exists only once the workflow has built it). Their findings gate
+	// on every run, like the tree's.
+	OwnImages []string `yaml:"-"`
 	// License tunes the trivy-license pass.
 	License LicenseConfig `yaml:"license"`
 	// Upload targets the aggregation plane (P2/P3); empty = serverless (v1).
