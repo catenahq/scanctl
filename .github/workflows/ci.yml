@@ -29,6 +29,26 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  repo-rules:
+    # Rules every catena repo keeps. The check lives in catenahq/contracts and
+    # runs from there.
+    name: Repo rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          path: scanctl
+          persist-credentials: false
+      - name: Check out sibling contracts
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: catenahq/contracts
+          path: contracts
+          persist-credentials: false
+      - name: Repo rules (no tracked env file; .gitignore carries the env rule)
+        working-directory: ./scanctl
+        run: node ../contracts/scripts/check-repo-rules.mjs
+
   self-scan:
     name: scanctl scans scanctl (dogfood)
     runs-on: ubuntu-latest
