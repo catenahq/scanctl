@@ -28,8 +28,10 @@ resale-restricted and runs only under the `full` profile (see Profiles).
 Scanner versions are pinned in [`tools.lock`](tools.lock) (embedded in the
 binary) and bumped by Renovate. Release-binary tools (trivy, osv-scanner,
 gitleaks, gosec, zizmor) are lazy-fetched and cached (set `SCANCTL_CACHE` to
-relocate); govulncheck is `go install`ed; the Python tools (semgrep, guarddog)
-are installed with `uv tool install`. **Runner prerequisites:** `go` and `uv`
+relocate); govulncheck is `go install`ed with the toolchain the scanned module
+selects (its go.mod `toolchain` line), because it type-checks the module with
+the go/types it was built with; the Python tools (semgrep, guarddog) are
+installed with `uv tool install`. **Runner prerequisites:** `go` and `uv`
 on `PATH` (the reusable workflow sets both up).
 
 zizmor runs in **block** mode with a bundled policy ([`internal/runner/zizmor-policy.yml`](internal/runner/zizmor-policy.yml),
@@ -43,7 +45,10 @@ gitleaks scans the history of the commit being scanned, with a bundled config
 ([`internal/runner/gitleaks.toml`](internal/runner/gitleaks.toml)): gitleaks'
 own rules plus an allowlist for version tags, which its generic-api-key rule
 reads as secrets after a name containing "auth" (an `oauth2-proxy` image tag).
-A repo's own `.gitleaks.toml` takes its place.
+A repo's own `.gitleaks.toml` takes its place. The `ignore` list reaches
+gitleaks as a generated config that extends that one and allowlists each
+ignored directory. gitleaks owns secrets, so gosec runs without G101
+(hardcoded credentials), which reads names such as settings keys as secrets.
 
 GuardDog's SARIF comes from its manifest-based `verify` subcommand, so it scans
 only a root `requirements.txt` (PyPI), `package-lock.json` (npm), or `go.mod`
@@ -86,11 +91,14 @@ the configured gate floor, or when a `block`-mode scan produces no report at all
 (unpinned, fetch failed, or exited non-zero without one; an image scan is
 retried once first). Zero findings from a scanner that never ran is not a pass:
 the summary lists those scans under "Scanners that did not run", and the run
-carries on so the other scanners' findings still reach the report. The floor is compared against each finding's CVSS
-`security-severity` when the tool reports one (the same score GitHub uses),
-falling back to the SARIF level -- so the floor means what it says rather than
-over- or under-gating on a coarse error/warning. gitleaks reports no severity;
-a committed secret is critical. Config is optional
+carries on so the other scanners' findings still reach the report.
+
+The floor is compared against each finding's CVSS `security-severity` when the
+tool reports one (the same score GitHub uses), then a single severity tag on
+its rule (gosec tags each rule HIGH, MEDIUM or LOW and emits every one at level
+error), falling back to the SARIF level -- so the floor means what it says
+rather than over- or under-gating on a coarse error/warning. gitleaks reports
+no severity; a committed secret is critical. Config is optional
 ([`scanctl.example.yml`](scanctl.example.yml)); with no file, sensible defaults
 apply: every tool blocks except `trivy-license`.
 
@@ -206,10 +214,20 @@ and the two are joined, which is how a role default that splits them has to be
 read. A pattern narrower than a bare `<repo>:<tag>` grep is deliberate: prose
 in a neighbouring comment matches that shape too.
 
-**A pin that matches nothing fails the run.** A moved file or a renamed
-variable would otherwise scan no image and still report a clean gate -- which
-is exactly how a repo can carry a green image-CVE gate that has not looked at
-an image in weeks.
+`file` may be a glob (`path.Match` syntax, slash-separated), and every file it
+matches is read: one entry covers a catalog of compose files.
+
+```yaml
+image_pins:
+  - file: blueprints/*/docker-compose.yml
+    pattern: '(?m)^\s*image:\s*["'']?([^"''\s#]+)'
+```
+
+**A pin that matches nothing fails the run**, and so does a glob that matches
+no file or whose files yield no ref. A moved file or a renamed variable would
+otherwise scan no image and still report a clean gate -- which is exactly how
+a repo can carry a green image-CVE gate that has not looked at an image in
+weeks.
 
 Pin files are read from the tree being scanned, so `--baseline-ref` resolves
 the merge-base's pins from its worktree: a bump is graded on the delta between
@@ -221,13 +239,14 @@ baseline scan re-reads
 the branch the same way.
 
 Under `--baseline-ref`, only the pins whose FILE the change touches are
-scanned. An untouched pin resolves to the same ref on both sides, so scanning
-it twice can only produce findings that suppress each other -- and on a repo
-pinning nine images, proving that zero is most of a run. A run without
+scanned, on both sides. A glob pin is narrowed to the files it matches that
+the change touches, one pin per file, leaving out a file the change deleted.
+An untouched pin resolves to the same ref on both sides, so scanning it twice
+can only produce findings that suppress each other -- and on a repo pinning
+nine images, proving that zero is most of a run. A run without
 `--baseline-ref` keeps every pin, which is how the scheduled report covers an
-image nobody touched. A pin the change
-ADDS has nothing to resolve at the merge base; that is a pin with no baseline,
-so all of its findings gate.
+image nobody touched. A pin the change ADDS has nothing to resolve at the
+merge base; that is a pin with no baseline, so all of its findings gate.
 
 A repo's `.trivyignore.yaml` (or `.trivyignore.yml` / `.trivyignore`) at the
 scanned root is passed to BOTH trivy passes as `--ignorefile`. trivy does not
