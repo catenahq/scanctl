@@ -54,7 +54,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 			out.Skipped[td.name] = "unpinned"
 			continue
 		}
-		bin, err := td.ensure(ctx, version)
+		bin, err := td.ensure(ctx, version, root)
 		if err != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: fetch failed: %v", td.name, err))
 			out.Skipped[td.name] = "fetch failed"
@@ -227,7 +227,7 @@ func mergeSARIFRun(driver string, cmd *exec.Cmd, outPath string, stdoutToOut boo
 func trivyEnsure(ctx context.Context, version string) (string, error) {
 	for _, td := range registry {
 		if td.name == "trivy" {
-			return td.ensure(ctx, version)
+			return td.ensure(ctx, version, "")
 		}
 	}
 	return "", fmt.Errorf("trivy not in registry")

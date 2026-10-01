@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 // pyToolPython is the interpreter uv installs Python-based tools under. Pinned
@@ -22,7 +24,7 @@ const pyToolPython = "3.13"
 // ~150MB) while still capping a malicious archive.
 const maxArtifactBytes = 1 << 30 // 1 GiB
 
-// cacheRoot is where fetched scanner binaries and the govulncheck install land,
+// cacheRoot is where fetched scanner binaries and the govulncheck installs land,
 // reused across runs (on a persistent runner this means one download per pin).
 func cacheRoot() string {
 	if d := os.Getenv("SCANCTL_CACHE"); d != "" {
@@ -132,14 +134,24 @@ func downloadTarGzBinary(ctx context.Context, url, binInArchive, destBin string)
 	}
 }
 
-// goInstall runs `go install <module>/<cmdSubpath>@v<version>` into a
-// per-version GOBIN under the cache and returns the resulting binary path. Used
-// for govulncheck, which ships as a Go command rather than a release asset.
-// `go install` names the output after the command (base of cmdSubpath), so the
-// version is carried by the GOBIN directory, not the filename.
-func goInstall(ctx context.Context, module, cmdSubpath, version string) (string, error) {
+// goInstall runs `go install <module>/<cmdSubpath>@v<version>` into a GOBIN
+// under the cache and returns the resulting binary path. Used for govulncheck,
+// which ships as a Go command rather than a release asset.
+//
+// It builds with the toolchain the scanned module at root selects. govulncheck
+// type-checks the module's sources with the go/types it was compiled with, so
+// one built by an older toolchain cannot load code using newer language
+// features. `go install pkg@version` runs outside any module and would use
+// whatever go is on PATH, hence GOTOOLCHAIN. `go install` names the output
+// after the command (base of cmdSubpath), so the tool version and toolchain
+// are carried by the GOBIN directory, not the filename.
+func goInstall(ctx context.Context, module, cmdSubpath, version, root string) (string, error) {
+	toolchain, err := moduleToolchain(ctx, root)
+	if err != nil {
+		return "", err
+	}
 	binName := path.Base(cmdSubpath)
-	gobin := filepath.Join(cacheRoot(), binName+"-"+version)
+	gobin := filepath.Join(cacheRoot(), binName+"-"+version+"-"+toolchain)
 	dest := filepath.Join(gobin, binName)
 	if fi, err := os.Stat(dest); err == nil && !fi.IsDir() {
 		return dest, nil
@@ -150,12 +162,31 @@ func goInstall(ctx context.Context, module, cmdSubpath, version string) (string,
 	pkg := fmt.Sprintf("%s/%s@v%s", module, cmdSubpath, version)
 	// #nosec G204 -- pkg is built from the pinned tools.lock (module + version), not user input
 	cmd := exec.CommandContext(ctx, "go", "install", pkg)
-	cmd.Env = append(os.Environ(), "GOBIN="+gobin)
+	cmd.Env = append(os.Environ(), "GOBIN="+gobin, "GOTOOLCHAIN="+toolchain)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go install %s: %w\n%s", pkg, err, out)
 	}
 	return dest, nil
 }
+
+// moduleToolchain is the Go toolchain the module at root selects (its go.mod
+// toolchain line under GOTOOLCHAIN=auto), e.g. "go1.27.1".
+func moduleToolchain(ctx context.Context, root string) (string, error) {
+	// #nosec G204 -- fixed go subcommand; root is the scan target path
+	out, err := exec.CommandContext(ctx, "go", "-C", root, "env", "GOVERSION").Output()
+	if err != nil {
+		return "", fmt.Errorf("go env GOVERSION in %s: %w", root, err)
+	}
+	v := strings.TrimSpace(string(out))
+	if !goVersionRx.MatchString(v) {
+		return "", fmt.Errorf("go env GOVERSION in %s: unexpected %q", root, v)
+	}
+	return v, nil
+}
+
+// goVersionRx is a released toolchain name, which GOTOOLCHAIN accepts and a
+// cache directory name can carry.
+var goVersionRx = regexp.MustCompile(`^go[0-9]+(\.[0-9]+)*(rc[0-9]+)?$`)
 
 // pyInstall installs a pinned PyPI tool with `uv tool install pkg==version` into
 // a per-version cache dir and returns the resolved entry-point path. uv is a

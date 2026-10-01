@@ -16,7 +16,7 @@ func ensureSyft(ctx context.Context, version string) (string, error) {
 		return fmt.Sprintf("https://github.com/anchore/syft/releases/download/v%s/syft_%s_linux_%s.tar.gz",
 			v, v, runtime.GOARCH)
 	}, "syft")
-	return fetch(ctx, version)
+	return fetch(ctx, version, "")
 }
 
 // GenerateSBOM writes a CycloneDX JSON SBOM of root to outPath using syft.

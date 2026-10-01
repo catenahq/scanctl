@@ -31,7 +31,7 @@ type toolDef struct {
 	// is resale-clean and runs in both profiles.
 	fullOnly bool
 	applies  func(detect.Result) bool
-	ensure   func(ctx context.Context, version string) (binPath string, err error)
+	ensure   func(ctx context.Context, version, root string) (binPath string, err error)
 	// invoke builds the argv. det is passed so a tool can shape its invocation
 	// from what was detected (e.g. semgrep selects rule packs per ecosystem);
 	// tools that do not need it ignore the arg.
@@ -137,8 +137,8 @@ var registry = []toolDef{
 		name:     "govulncheck",
 		scanType: "Govulncheck Scanner",
 		applies:  func(r detect.Result) bool { return r.Has(detect.Go) },
-		ensure: func(ctx context.Context, version string) (string, error) {
-			return goInstall(ctx, "golang.org/x/vuln", "cmd/govulncheck", version)
+		ensure: func(ctx context.Context, version, root string) (string, error) {
+			return goInstall(ctx, "golang.org/x/vuln", "cmd/govulncheck", version, root)
 		},
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			return invocation{
@@ -158,7 +158,7 @@ var registry = []toolDef{
 		scanType: "Semgrep JSON Report",
 		fullOnly: true,
 		applies:  func(r detect.Result) bool { return r.Has(detect.Go) || r.Has(detect.Node) || r.Has(detect.Python) },
-		ensure: func(ctx context.Context, version string) (string, error) {
+		ensure: func(ctx context.Context, version, _ string) (string, error) {
 			return pyInstall(ctx, "semgrep", version, "semgrep")
 		},
 		invoke: func(bin, root, out string, det detect.Result) invocation {
@@ -248,8 +248,8 @@ func zizmorArch() string {
 
 // ghBinary returns an ensure func for a plain (non-archive) release binary,
 // cached per version under the cache root.
-func ghBinary(tool string, urlFn func(version string) string) func(context.Context, string) (string, error) {
-	return func(ctx context.Context, version string) (string, error) {
+func ghBinary(tool string, urlFn func(version string) string) func(context.Context, string, string) (string, error) {
+	return func(ctx context.Context, version, _ string) (string, error) {
 		dest := filepath.Join(cacheRoot(), tool+"-"+version, tool)
 		if fi, err := os.Stat(dest); err == nil && !fi.IsDir() {
 			return dest, nil
@@ -263,8 +263,8 @@ func ghBinary(tool string, urlFn func(version string) string) func(context.Conte
 
 // ghTarGz returns an ensure func for a .tar.gz release asset, extracting
 // binInArchive, cached per version.
-func ghTarGz(tool string, urlFn func(version string) string, binInArchive string) func(context.Context, string) (string, error) {
-	return func(ctx context.Context, version string) (string, error) {
+func ghTarGz(tool string, urlFn func(version string) string, binInArchive string) func(context.Context, string, string) (string, error) {
+	return func(ctx context.Context, version, _ string) (string, error) {
 		dest := filepath.Join(cacheRoot(), tool+"-"+version, tool)
 		if fi, err := os.Stat(dest); err == nil && !fi.IsDir() {
 			return dest, nil
