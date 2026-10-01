@@ -124,8 +124,11 @@ var registry = []toolDef{
 				v, v, runtime.GOARCH)
 		}, "gosec"),
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
+			// G101 (hardcoded credentials) reads names such as settings keys
+			// and env-var names as secrets. gitleaks owns secrets, over the
+			// whole history.
 			return invocation{
-				args:    []string{"-fmt", "sarif", "-out", out, "-quiet", "-no-fail", "./..."},
+				args:    []string{"-fmt", "sarif", "-out", out, "-quiet", "-no-fail", "-exclude=G101", "./..."},
 				workdir: root,
 			}
 		},
