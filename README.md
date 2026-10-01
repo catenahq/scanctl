@@ -65,15 +65,15 @@ fold in the old standalone `licenses-sbom` workflow.
 ## Install
 
 ```sh
-go install github.com/catenahq/scanctl/cmd/scanctl@main
+go install github.com/catenahq/scanctl/cmd/scanctl@latest
 ```
 
 Public module, so this needs nothing beyond `go` on `PATH` -- no `GOPRIVATE`,
 no auth. Installs to `$(go env GOPATH)/bin`; put that on `PATH` (or invoke it
-as `"$(go env GOPATH)/bin/scanctl"`, which is what every CI workflow in this
-org does, since the runner's own `PATH` isn't guaranteed to include it). Pin
-`@vX.Y.Z` instead of `@main` for a reproducible one-off run; CI stays on
-`@main` deliberately (see `.github/workflows/github-reusable.yml`).
+as `"$(go env GOPATH)/bin/scanctl"`, since a runner's own `PATH` isn't
+guaranteed to include it). Pin `@vX.Y.Z` or a commit for a reproducible
+one-off run. The reusable workflow installs the scanctl branch named like the
+caller's when there is one, else its `scanctl-version` input (see "In CI").
 
 ## Usage
 
