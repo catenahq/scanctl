@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"debug/buildinfo"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,11 +14,13 @@ import (
 )
 
 // invocation describes how to run a tool: the argv, the working directory
-// (empty = current), and whether the SARIF lands on stdout (captured to the
-// out file) rather than being written by the tool itself.
+// (empty = current), variables added to scanctl's environment, and whether the
+// SARIF lands on stdout (captured to the out file) rather than being written by
+// the tool itself.
 type invocation struct {
 	args        []string
 	workdir     string
+	env         []string
 	stdoutToOut bool
 }
 
@@ -141,10 +144,18 @@ var registry = []toolDef{
 			return goInstall(ctx, "golang.org/x/vuln", "cmd/govulncheck", version, root)
 		},
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
-			return invocation{
+			inv := invocation{
 				args:        []string{"-C", root, "-format", "sarif", "./..."},
 				stdoutToOut: true,
 			}
+			// govulncheck grades the standard library of `go env GOVERSION` and
+			// loads packages with that go. Both run under the toolchain that
+			// built it, the one the module selects (goInstall): under a
+			// runner's GOTOOLCHAIN=local, go is whichever comes first on PATH.
+			if bi, err := buildinfo.ReadFile(bin); err == nil {
+				inv.env = []string{"GOTOOLCHAIN=" + bi.GoVersion}
+			}
+			return inv
 		},
 	},
 	{

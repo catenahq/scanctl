@@ -138,6 +138,9 @@ func runTool(ctx context.Context, td toolDef, bin, root string, det detect.Resul
 	// tools.lock, never from the scanned repo or user input
 	cmd := exec.CommandContext(ctx, bin, inv.args...)
 	cmd.Dir = inv.workdir
+	if inv.env != nil {
+		cmd.Env = append(os.Environ(), inv.env...)
+	}
 
 	var diag string
 	var runErr error

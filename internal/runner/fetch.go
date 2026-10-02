@@ -170,10 +170,15 @@ func goInstall(ctx context.Context, module, cmdSubpath, version, root string) (s
 }
 
 // moduleToolchain is the Go toolchain the module at root selects (its go.mod
-// toolchain line under GOTOOLCHAIN=auto), e.g. "go1.27.1".
+// toolchain line under GOTOOLCHAIN=auto), e.g. "go1.27.1". It sets
+// GOTOOLCHAIN=auto itself: a runner may export GOTOOLCHAIN=local (setup-go
+// does), under which go reports the version of whichever go comes first on
+// PATH and skips the toolchain line.
 func moduleToolchain(ctx context.Context, root string) (string, error) {
 	// #nosec G204 -- fixed go subcommand; root is the scan target path
-	out, err := exec.CommandContext(ctx, "go", "-C", root, "env", "GOVERSION").Output()
+	cmd := exec.CommandContext(ctx, "go", "-C", root, "env", "GOVERSION")
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=auto")
+	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("go env GOVERSION in %s: %w", root, err)
 	}

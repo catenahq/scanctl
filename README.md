@@ -30,7 +30,9 @@ binary) and bumped by Renovate. Release-binary tools (trivy, osv-scanner,
 gitleaks, gosec, zizmor) are lazy-fetched and cached (set `SCANCTL_CACHE` to
 relocate); govulncheck is `go install`ed with the toolchain the scanned module
 selects (its go.mod `toolchain` line), because it type-checks the module with
-the go/types it was built with; the Python tools (semgrep, guarddog) are
+the go/types it was built with, and runs under that toolchain, so it grades
+that toolchain's standard library even when the runner sets
+`GOTOOLCHAIN=local`; the Python tools (semgrep, guarddog) are
 installed with `uv tool install`. **Runner prerequisites:** `go` and `uv`
 on `PATH` (the reusable workflow sets both up).
 

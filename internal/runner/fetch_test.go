@@ -2,10 +2,15 @@ package runner
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/catenahq/scanctl/internal/detect"
 )
 
 // goModule writes a minimal module at a temp root and returns the root and the
@@ -49,6 +54,25 @@ func TestGoInstallIsCachedPerToolchain(t *testing.T) {
 	}
 	if got != cached {
 		t.Errorf("goInstall = %q, want the cached build for %s at %q", got, toolchain, cached)
+	}
+}
+
+// govulncheck runs under the toolchain that built it, so the standard library
+// it grades is that toolchain's, whatever go comes first on PATH.
+func TestGovulncheckRunsUnderTheToolchainThatBuiltIt(t *testing.T) {
+	var gv toolDef
+	for _, td := range registry {
+		if td.name == "govulncheck" {
+			gv = td
+		}
+	}
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := gv.invoke(bin, t.TempDir(), "out.sarif", detect.Result{}).env
+	if want := "GOTOOLCHAIN=" + runtime.Version(); !slices.Contains(env, want) {
+		t.Errorf("govulncheck env = %v, want %q", env, want)
 	}
 }
 
