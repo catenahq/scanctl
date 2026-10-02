@@ -139,9 +139,9 @@ func downloadTarGzBinary(ctx context.Context, url, binInArchive, destBin string)
 // which ships as a Go command rather than a release asset.
 //
 // It builds with the toolchain the scanned module at root selects. govulncheck
-// type-checks the module's sources with the go/types it was compiled with, so
-// one built by an older toolchain cannot load code using newer language
-// features. `go install pkg@version` runs outside any module and would use
+// type-checks the module's sources with the go/types of the toolchain that
+// compiled it, so one built by an older toolchain cannot load code using newer
+// language features. `go install pkg@version` runs outside any module and would use
 // whatever go is on PATH, hence GOTOOLCHAIN. `go install` names the output
 // after the command (base of cmdSubpath), so the tool version and toolchain
 // are carried by the GOBIN directory, not the filename.
