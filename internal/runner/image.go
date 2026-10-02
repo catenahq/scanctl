@@ -23,12 +23,13 @@ import (
 // the step is recorded as "trivy-image" in out.Ran for visibility. Each
 // finding records its image under ImageProperty, or OwnImageProperty for an
 // image the repo builds. A ref whose scan fails is retried once (registry
-// pulls fail transiently), then recorded in out.Failed.
+// pulls fail transiently), then recorded in out.Failed. ignore is the trivy
+// ignore file passed to every scan, or "" for none.
 //
 // The returned error is reserved for a pin that resolves to nothing, which is
 // a defect in scanctl.yml rather than a scan that went wrong: an unresolvable
 // pin means an image silently goes unscanned and the run still reports clean.
-func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, out *Outcome) error {
+func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore string, out *Outcome) error {
 	refs, err := resolveImageRefs(cfg, root)
 	if err != nil {
 		return err
@@ -63,8 +64,6 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root string, o
 		out.fail(cfg, "trivy", "trivy-image", "fetch failed")
 		return nil
 	}
-
-	ignore := trivyIgnoreFile(root)
 
 	ran := false
 	for _, j := range jobs {
@@ -139,9 +138,8 @@ func tagImage(runs []sarif.Run, prop, ref string) {
 // a repo's reviewed and time-boxed suppressions would silently not apply and
 // the image gate would re-report every CVE the operator has already triaged.
 //
-// Read from the scanned root, so a --baseline-ref run applies the base
-// branch's suppression list to the base branch's images. Adding a suppression
-// therefore quiets both sides at once rather than reading as a fixed CVE.
+// Only the HEAD scan applies it. The base side of a --baseline-ref diff
+// (ScanImages) scans with none, so the diff compares what the images carry.
 func trivyIgnoreFile(root string) string {
 	for _, name := range []string{".trivyignore.yaml", ".trivyignore.yml", ".trivyignore"} {
 		p := filepath.Join(root, name)

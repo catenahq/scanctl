@@ -100,7 +100,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 	// scan that went wrong.
 	guarddogStep(ctx, cfg, lock, root, out)
 	licenseStep(ctx, cfg, lock, root, out)
-	if err := imageStep(ctx, cfg, lock, root, out); err != nil {
+	if err := imageStep(ctx, cfg, lock, root, trivyIgnoreFile(root), out); err != nil {
 		return nil, err
 	}
 
@@ -108,10 +108,12 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 }
 
 // ScanImages runs only the image scan of cfg's images and image pins under
-// root: the half of a run a base-commit diff compares.
+// root: the half of a run a base-commit diff compares. It applies no trivy
+// ignore file, so the base side holds every CVE its images carry, and a
+// suppression the change removes does not read as CVEs the change brought in.
 func ScanImages(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outcome, error) {
 	out := newOutcome()
-	if err := imageStep(ctx, cfg, lock, root, out); err != nil {
+	if err := imageStep(ctx, cfg, lock, root, "", out); err != nil {
 		return nil, err
 	}
 	return out, nil

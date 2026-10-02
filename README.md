@@ -255,8 +255,9 @@ scanned root is passed to BOTH trivy passes as `--ignorefile`. trivy does not
 pick one up on its own -- verified against 0.74, where a file sitting in the
 working directory changed nothing until the flag named it -- so without this
 the suppressions a repo has already reviewed and time-boxed would not apply.
-It is read from the scanned root, so adding a suppression quiets both sides of
-a `--baseline-ref` diff at once rather than reading as a newly fixed CVE.
+The base side of a `--baseline-ref` diff scans its images with no ignore file,
+so the diff compares what the images carry: a change that removes a
+suppression gates only on the CVEs its own image changes bring in.
 
 One file, one answer, on purpose: honouring it for images but not for the fs
 scan means a suppression the operator wrote once takes effect in half the run,
