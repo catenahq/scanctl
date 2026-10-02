@@ -1,8 +1,7 @@
 name: release
 
-# CD: on a vX.Y.Z tag, build the binary for linux amd64+arm64, attach them to a
-# GitHub Release, and publish a slim image to GHCR. Consumers pin the reusable
-# workflow / module to the tag; their own Renovate bumps the ref (the pull leg).
+# CD: on a vX.Y.Z tag, build the binary for linux amd64+arm64, attach both to
+# a GitHub Release, and publish an image to GHCR.
 
 on:
   push:
@@ -13,15 +12,16 @@ permissions:
 
 jobs:
   binaries:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub Release + upload the binaries
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-      - name: Put Go on PATH
-        run: echo "$HOME/.local/go/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: stable
       - name: Build
         run: |
           set -euo pipefail
@@ -33,16 +33,14 @@ jobs:
               -o "dist/scanctl_linux_${arch}" ./cmd/scanctl
           done
       - name: Release
-        # zizmor: ignore[superfluous-actions] -- this is a self-hosted runner
-        # (see the manual "Put Go on PATH" step); the gh CLI is not guaranteed
-        # present, so `gh release` is not a drop-in. The action is SHA-pinned.
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
-        with:
-          files: dist/scanctl_linux_*
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/scanctl_linux_* --verify-tag --generate-notes
 
   image:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write # push the image to GHCR
