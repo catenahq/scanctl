@@ -40,7 +40,7 @@ jobs:
           path: scanctl
           persist-credentials: false
       - name: Check out sibling contracts
-        uses: catenahq/contracts/.github/actions/checkout-sibling@main
+        uses: catenahq/contracts/.github/actions/checkout-sibling@cdc425103e533be7b83f6fa758f2e6810ff3c538 # main
         with:
           repository: catenahq/contracts
           path: contracts
