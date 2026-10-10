@@ -245,3 +245,40 @@ func TestMergePreservesRuns(t *testing.T) {
 		t.Error("per-tool run identity not preserved after merge")
 	}
 }
+
+// The fs scan and two image scans are three trivy runs; joined they are one,
+// holding every finding, with a rule two of them report listed once, as the
+// first one reported it.
+func TestOneRunPerToolJoinsTheRunsOfATool(t *testing.T) {
+	withRules := func(r Run, ids ...string) Run {
+		for _, id := range ids {
+			r.Tool.Driver.Rules = append(r.Tool.Driver.Rules, Rule{ID: id, Properties: map[string]any{"run": len(r.Results)}})
+		}
+		return r
+	}
+	rep := New()
+	rep.Merge(&Report{Runs: []Run{
+		withRules(run("trivy", 1), "CVE-1"),
+		run("gosec", 2),
+		withRules(run("trivy", 3), "CVE-1", "CVE-2"),
+		run("trivy", 0),
+	}})
+
+	got := rep.OneRunPerTool()
+	if len(got.Runs) != 2 || got.Runs[0].Tool.Driver.Name != "trivy" || got.Runs[1].Tool.Driver.Name != "gosec" {
+		t.Fatalf("runs = %+v, want trivy then gosec", got.Runs)
+	}
+	if got.ResultCount() != rep.ResultCount() || len(got.Runs[0].Results) != 4 {
+		t.Errorf("results = %d (trivy %d), want %d (trivy 4)", got.ResultCount(), len(got.Runs[0].Results), rep.ResultCount())
+	}
+	rules := got.Runs[0].Tool.Driver.Rules
+	if len(rules) != 2 || rules[0].ID != "CVE-1" || rules[0].Properties["run"] != 1 || rules[1].ID != "CVE-2" {
+		t.Errorf("trivy rules = %+v, want CVE-1 from the first run, then CVE-2", rules)
+	}
+	if got.Schema != rep.Schema || got.Version != rep.Version {
+		t.Errorf("schema/version = %q/%q, want %q/%q", got.Schema, got.Version, rep.Schema, rep.Version)
+	}
+	if len(rep.Runs) != 4 || len(rep.Runs[0].Results) != 1 || len(rep.Runs[2].Tool.Driver.Rules) != 2 {
+		t.Error("OneRunPerTool changed the report it was called on")
+	}
+}

@@ -296,6 +296,11 @@ jobs:
       pull-requests: write     # sticky findings comment (private-repo parity)
 ```
 
+The SARIF scanctl writes holds one run per tool: the fs scan and every image
+scan are one trivy run. Code scanning refuses a file holding two runs of one
+tool and category, or more than 20 runs, so the upload goes through whatever
+the number of images a scan covers.
+
 On a private repo without Advanced Security the code-scanning upload is a
 no-op, so the workflow also (a) posts the findings summary as one sticky PR
 comment (updated in place) and (b) uploads `scanctl.sarif` + the SBOM as a

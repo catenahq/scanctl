@@ -321,7 +321,7 @@ func parseIfPresent(outPath string) *sarif.Report {
 }
 
 // tagDriver normalizes every run's tool name to the canonical id so the gate
-// and any P2 upload can map findings back to their config entry.
+// and any upload can map findings back to their config entry.
 func tagDriver(rep *sarif.Report, name string) {
 	for i := range rep.Runs {
 		rep.Runs[i].Tool.Driver.Name = name

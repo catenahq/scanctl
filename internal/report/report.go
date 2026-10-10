@@ -1,7 +1,7 @@
 // Package report writes the merged SARIF to disk and renders a human-readable
 // markdown summary. SARIF is the machine artifact (GitHub code-scanning + the
-// P2 DefectDojo upload consume it unchanged); the markdown is for the CI log
-// and the operator.
+// DefectDojo upload consume it unchanged); the markdown is for the CI log and
+// the operator.
 package report
 
 import (
@@ -16,11 +16,12 @@ import (
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
-// WriteSARIF marshals rep to path with indentation, after normalizing it so the
-// output is schema-valid (no null results arrays).
+// WriteSARIF marshals rep to path with indentation, one run per tool (the
+// shape code scanning uploads, see sarif.Report.OneRunPerTool), after
+// normalizing it so the output is schema-valid (no null results arrays).
 func WriteSARIF(rep *sarif.Report, path string) error {
 	rep.Normalize()
-	data, err := json.MarshalIndent(rep, "", "  ")
+	data, err := json.MarshalIndent(rep.OneRunPerTool(), "", "  ")
 	if err != nil {
 		return err
 	}

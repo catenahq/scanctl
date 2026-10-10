@@ -96,8 +96,8 @@ type Result struct {
 	// Suppressions carries a tool's in-source suppressions (e.g. a semgrep
 	// `nosemgrep` comment). It MUST round-trip through the merge: GitHub code
 	// scanning reads it to create the alert in the dismissed state, and the
-	// gate ignores suppressed findings. Dropping it (the pre-fix behavior)
-	// resurfaced every nosemgrep'd finding as an open alert.
+	// gate ignores suppressed findings. Dropping it would resurface every
+	// nosemgrep'd finding as an open alert.
 	Suppressions []Suppression `json:"suppressions,omitempty"`
 	// Properties may carry a per-result "security-severity" score (some tools
 	// put it here instead of on the rule) and other metadata. Preserved.
@@ -294,13 +294,48 @@ func Load(path string) (*Report, error) {
 	return &rep, nil
 }
 
-// Merge folds every run of src into dst, preserving per-tool runs so the
-// producing scanner stays identifiable in the merged output.
+// Merge appends every run of src to dst: one run per scan, each keeping the
+// rules its own scan reported, which the gate grades its findings against.
+// The written report joins them per tool (OneRunPerTool).
 func (dst *Report) Merge(src *Report) {
 	if src == nil {
 		return
 	}
 	dst.Runs = append(dst.Runs, src.Runs...)
+}
+
+// OneRunPerTool returns a copy of r holding one run per tool, in the order each
+// tool first appears: trivy's fs scan and every image scan join one trivy run.
+// That is the shape code scanning takes whatever the number of images a scan
+// covers: codeql-action upload-sarif refuses a file holding two runs of one
+// tool and automationDetails.id (scanctl sets none), and code scanning rejects
+// a file of more than 20 runs. A rule id several runs share keeps the first
+// run's rule. The runs of r stay as they are.
+func (r *Report) OneRunPerTool() *Report {
+	out := &Report{Schema: r.Schema, Version: r.Version, Runs: []Run{}}
+	index := map[string]int{}
+	rules := map[string]map[string]bool{}
+	for _, run := range r.Runs {
+		name := run.Tool.Driver.Name
+		i, seen := index[name]
+		if !seen {
+			i = len(out.Runs)
+			index[name] = i
+			rules[name] = map[string]bool{}
+			driver := run.Tool.Driver
+			driver.Rules = nil
+			out.Runs = append(out.Runs, Run{Tool: Tool{Driver: driver}, Results: []Result{}})
+		}
+		joined := &out.Runs[i]
+		for _, rule := range run.Tool.Driver.Rules {
+			if !rules[name][rule.ID] {
+				rules[name][rule.ID] = true
+				joined.Tool.Driver.Rules = append(joined.Tool.Driver.Rules, rule)
+			}
+		}
+		joined.Results = append(joined.Results, run.Results...)
+	}
+	return out
 }
 
 // Normalize guarantees the document validates against the SARIF schema before
