@@ -318,6 +318,21 @@ func TestTagImageNamesTheImageOnEveryResult(t *testing.T) {
 	}
 }
 
+// A third-party image's run goes in the image category even when the image is
+// clean; an own image's stays in the default one, with the fs scan.
+func TestTagImageFilesAThirdPartyImageInTheImageCategory(t *testing.T) {
+	third := []sarif.Run{{}}
+	tagImage(third, sarif.ImageProperty, "postgres:18.6-alpine")
+	if d := third[0].AutomationDetails; d == nil || d.ID != sarif.ImageCategory {
+		t.Errorf("third-party image run category = %+v, want %s", d, sarif.ImageCategory)
+	}
+	own := []sarif.Run{{Results: []sarif.Result{{RuleID: "CVE-1"}}}}
+	tagImage(own, sarif.OwnImageProperty, "catena-admin:ci")
+	if own[0].AutomationDetails != nil {
+		t.Errorf("own image run category = %+v, want the default", own[0].AutomationDetails)
+	}
+}
+
 // Pin files are read from the tree being scanned, which is what makes a
 // --baseline-ref run resolve the merge-base's pins from its worktree instead
 // of re-reading HEAD's.

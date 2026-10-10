@@ -246,10 +246,10 @@ func TestMergePreservesRuns(t *testing.T) {
 	}
 }
 
-// The fs scan and two image scans are three trivy runs; joined they are one,
-// holding every finding, with a rule two of them report listed once, as the
-// first one reported it.
-func TestOneRunPerToolJoinsTheRunsOfATool(t *testing.T) {
+// The fs scan and two own-image scans are three trivy runs of one category;
+// joined they are one, holding every finding, with a rule two of them report
+// listed once, as the first one reported it.
+func TestOneRunPerCategoryJoinsTheRunsOfATool(t *testing.T) {
 	withRules := func(r Run, ids ...string) Run {
 		for _, id := range ids {
 			r.Tool.Driver.Rules = append(r.Tool.Driver.Rules, Rule{ID: id, Properties: map[string]any{"run": len(r.Results)}})
@@ -264,7 +264,7 @@ func TestOneRunPerToolJoinsTheRunsOfATool(t *testing.T) {
 		run("trivy", 0),
 	}})
 
-	got := rep.OneRunPerTool()
+	got := rep.OneRunPerCategory()
 	if len(got.Runs) != 2 || got.Runs[0].Tool.Driver.Name != "trivy" || got.Runs[1].Tool.Driver.Name != "gosec" {
 		t.Fatalf("runs = %+v, want trivy then gosec", got.Runs)
 	}
@@ -279,6 +279,32 @@ func TestOneRunPerToolJoinsTheRunsOfATool(t *testing.T) {
 		t.Errorf("schema/version = %q/%q, want %q/%q", got.Schema, got.Version, rep.Schema, rep.Version)
 	}
 	if len(rep.Runs) != 4 || len(rep.Runs[0].Results) != 1 || len(rep.Runs[2].Tool.Driver.Rules) != 2 {
-		t.Error("OneRunPerTool changed the report it was called on")
+		t.Error("OneRunPerCategory changed the report it was called on")
+	}
+}
+
+// The third-party image scans join a trivy run of their own, in ImageCategory,
+// a clean image's empty run included; the fs scan keeps the upload's default
+// category.
+func TestOneRunPerCategoryFilesTheImageScansApart(t *testing.T) {
+	image := func(n int) Run {
+		r := run("trivy", n)
+		r.AutomationDetails = &AutomationDetails{ID: ImageCategory}
+		return r
+	}
+	rep := New()
+	rep.Merge(&Report{Runs: []Run{run("trivy", 1), image(2), run("gosec", 1), image(0), run("trivy", 1)}})
+
+	got := rep.OneRunPerCategory()
+	if len(got.Runs) != 3 {
+		t.Fatalf("runs = %+v, want trivy, trivy in %s, gosec", got.Runs, ImageCategory)
+	}
+	fs, images := got.Runs[0], got.Runs[1]
+	if fs.Tool.Driver.Name != "trivy" || fs.AutomationDetails != nil || len(fs.Results) != 2 {
+		t.Errorf("fs run = %+v, want trivy's 2 fs findings in the default category", fs)
+	}
+	if images.Tool.Driver.Name != "trivy" || images.AutomationDetails == nil ||
+		images.AutomationDetails.ID != ImageCategory || len(images.Results) != 2 {
+		t.Errorf("image run = %+v, want trivy's 2 image findings in %s", images, ImageCategory)
 	}
 }

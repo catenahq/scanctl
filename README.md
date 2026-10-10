@@ -296,10 +296,16 @@ jobs:
       pull-requests: write     # sticky findings comment (private-repo parity)
 ```
 
-The SARIF scanctl writes holds one run per tool: the fs scan and every image
-scan are one trivy run. Code scanning refuses a file holding two runs of one
-tool and category, or more than 20 runs, so the upload goes through whatever
-the number of images a scan covers.
+The SARIF scanctl writes holds one run per tool and code-scanning category:
+the fs scan and the own images are one trivy run, the third-party images
+(`images:` and `image_pins:`) a second one, in the category `images`. Code
+scanning refuses a file holding two runs of one tool and category, or more
+than 20 runs, so the upload goes through whatever the number of images a scan
+covers. An analysis closes every alert of its tool and category it does not
+report and leaves the other categories' alerts as they were, so a run that
+scans only the pins its change touched writes no `images` run: an image alert
+opens or closes on a run that scans every pin, such as a scheduled one. The
+summary and the gate still read every image finding.
 
 On a private repo without Advanced Security the code-scanning upload is a
 no-op, so the workflow also (a) posts the findings summary as one sticky PR

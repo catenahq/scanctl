@@ -146,6 +146,7 @@ func runCmd(args []string) int {
 	// baseline stops lining up with the report it is suppressing against.
 	baseRef := resolveBaseRef(context.Background(), root, *baselineRef)
 	baseSha := ""
+	pinsScoped := false
 	if baseRef != "" {
 		fmt.Printf("baseline-ref: comparing with %s\n", baseRef)
 		sha, err := mergeBase(context.Background(), root, baseRef)
@@ -155,6 +156,7 @@ func runCmd(args []string) int {
 			baseSha = sha
 			if len(cfg.ImagePins) > 0 {
 				cfg = scopeImagePins(context.Background(), cfg, root, sha)
+				pinsScoped = true
 				fmt.Printf("image_pins: %d pin file(s) changed since %.12s; "+
 					"the rest resolve identically on both sides and are not rescanned\n",
 					len(cfg.ImagePins), sha)
@@ -237,7 +239,10 @@ func runCmd(args []string) int {
 		}
 	}
 
-	if err := report.WriteSARIF(out.Report, *outPath); err != nil {
+	// A run that scanned only the pins its change touched writes no third-party
+	// image findings: uploaded, they would close the alerts of every image it
+	// skipped.
+	if err := report.WriteSARIF(out.Report, *outPath, pinsScoped); err != nil {
 		fmt.Fprintln(os.Stderr, "write sarif:", err)
 		return 2
 	}

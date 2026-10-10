@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -16,12 +17,22 @@ import (
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
-// WriteSARIF marshals rep to path with indentation, one run per tool (the
-// shape code scanning uploads, see sarif.Report.OneRunPerTool), after
-// normalizing it so the output is schema-valid (no null results arrays).
-func WriteSARIF(rep *sarif.Report, path string) error {
+// WriteSARIF marshals rep to path with indentation, one run per tool and
+// category (the shape code scanning uploads, see
+// sarif.Report.OneRunPerCategory), after normalizing it so the output is
+// schema-valid (no null results arrays). partialImages leaves out the run in
+// sarif.ImageCategory: on a run that did not scan every third-party image it
+// would close the alerts of the images it skipped. rep keeps every finding for
+// the summary and the gate.
+func WriteSARIF(rep *sarif.Report, path string, partialImages bool) error {
 	rep.Normalize()
-	data, err := json.MarshalIndent(rep.OneRunPerTool(), "", "  ")
+	written := rep.OneRunPerCategory()
+	if partialImages {
+		written.Runs = slices.DeleteFunc(written.Runs, func(run sarif.Run) bool {
+			return run.AutomationDetails != nil && run.AutomationDetails.ID == sarif.ImageCategory
+		})
+	}
+	data, err := json.MarshalIndent(written, "", "  ")
 	if err != nil {
 		return err
 	}

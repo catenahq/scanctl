@@ -31,6 +31,15 @@ type Report struct {
 type Run struct {
 	Tool    Tool     `json:"tool"`
 	Results []Result `json:"results"`
+	// AutomationDetails files the run under a code-scanning category; nil
+	// leaves it to the upload's default.
+	AutomationDetails *AutomationDetails `json:"automationDetails,omitempty"`
+}
+
+// AutomationDetails is SARIF's runAutomationDetails. Code scanning reads its
+// id as "category/run-id", so an id ending in "/" names a category alone.
+type AutomationDetails struct {
+	ID string `json:"id"`
 }
 
 // Tool names the producing scanner.
@@ -156,6 +165,14 @@ const ImageProperty = "image"
 // -own-image flag). Its findings are fixable by a change to the repo, so no
 // base-commit scan suppresses them.
 const OwnImageProperty = "ownImage"
+
+// ImageCategory is the code-scanning category of the third-party image scans.
+// An analysis of a tool and category closes every alert of that tool and
+// category it does not report, and leaves the alerts of a category it does not
+// carry as they were. Filed apart from the trivy fs scan, the image findings can be left
+// out of a run that did not scan every image (report.WriteSARIF) without
+// closing the alerts of the images it skipped.
+const ImageCategory = "images/"
 
 // vulnIdentity names a dependency vulnerability by advisory, package, and where
 // the package sits: the image repository for an image-scan finding, the
@@ -296,7 +313,7 @@ func Load(path string) (*Report, error) {
 
 // Merge appends every run of src to dst: one run per scan, each keeping the
 // rules its own scan reported, which the gate grades its findings against.
-// The written report joins them per tool (OneRunPerTool).
+// The written report joins them per tool and category (OneRunPerCategory).
 func (dst *Report) Merge(src *Report) {
 	if src == nil {
 		return
@@ -304,32 +321,36 @@ func (dst *Report) Merge(src *Report) {
 	dst.Runs = append(dst.Runs, src.Runs...)
 }
 
-// OneRunPerTool returns a copy of r holding one run per tool, in the order each
-// tool first appears: trivy's fs scan and every image scan join one trivy run.
-// That is the shape code scanning takes whatever the number of images a scan
-// covers: codeql-action upload-sarif refuses a file holding two runs of one
-// tool and automationDetails.id (scanctl sets none), and code scanning rejects
-// a file of more than 20 runs. A rule id several runs share keeps the first
-// run's rule. The runs of r stay as they are.
-func (r *Report) OneRunPerTool() *Report {
+// OneRunPerCategory returns a copy of r holding one run per tool and category,
+// in the order each first appears: trivy's fs scan and own-image scans join
+// one trivy run, and the third-party image scans a second one, in
+// ImageCategory. That is the shape code scanning takes whatever the number of
+// images a scan covers: codeql-action upload-sarif refuses a file holding two
+// runs of one tool and automationDetails.id, and code scanning rejects a file
+// of more than 20 runs. A rule id several runs share keeps the first run's
+// rule. The runs of r stay as they are.
+func (r *Report) OneRunPerCategory() *Report {
 	out := &Report{Schema: r.Schema, Version: r.Version, Runs: []Run{}}
 	index := map[string]int{}
 	rules := map[string]map[string]bool{}
 	for _, run := range r.Runs {
-		name := run.Tool.Driver.Name
-		i, seen := index[name]
+		key := run.Tool.Driver.Name
+		if run.AutomationDetails != nil {
+			key += "\x00" + run.AutomationDetails.ID
+		}
+		i, seen := index[key]
 		if !seen {
 			i = len(out.Runs)
-			index[name] = i
-			rules[name] = map[string]bool{}
+			index[key] = i
+			rules[key] = map[string]bool{}
 			driver := run.Tool.Driver
 			driver.Rules = nil
-			out.Runs = append(out.Runs, Run{Tool: Tool{Driver: driver}, Results: []Result{}})
+			out.Runs = append(out.Runs, Run{Tool: Tool{Driver: driver}, Results: []Result{}, AutomationDetails: run.AutomationDetails})
 		}
 		joined := &out.Runs[i]
 		for _, rule := range run.Tool.Driver.Rules {
-			if !rules[name][rule.ID] {
-				rules[name][rule.ID] = true
+			if !rules[key][rule.ID] {
+				rules[key][rule.ID] = true
 				joined.Tool.Driver.Rules = append(joined.Tool.Driver.Rules, rule)
 			}
 		}

@@ -118,9 +118,14 @@ func scanImage(ctx context.Context, bin, ignore, ref, prop string, out *Outcome)
 // trivy's location is a path inside the image, which neither names the image
 // nor stays put across a bump (a jar is named for its version), so this
 // property is what matches a finding to the same image on both sides of a
-// diff.
+// diff. A third-party image's runs go in sarif.ImageCategory, a clean one's
+// too, so a run that scanned every image closes each image alert its scans do
+// not report.
 func tagImage(runs []sarif.Run, prop, ref string) {
 	for i := range runs {
+		if prop == sarif.ImageProperty {
+			runs[i].AutomationDetails = &sarif.AutomationDetails{ID: sarif.ImageCategory}
+		}
 		for j := range runs[i].Results {
 			r := &runs[i].Results[j]
 			if r.Properties == nil {
