@@ -65,10 +65,8 @@ var registry = []toolDef{
 			// License scanning is intentionally omitted here: permissive-license
 			// notices are noise, and license *policy* is owned by Dependency-Track
 			// (P3), which reasons over the full SBOM rather than per-file matches.
-			args := []string{
-				"fs", "--quiet", "--format", "sarif", "--output", out,
-				"--scanners", "vuln,misconfig,secret", "--ignore-unfixed",
-			}
+			args := trivyArgs("fs", "--quiet", "--format", "sarif", "--output", out,
+				"--scanners", "vuln,misconfig,secret", "--ignore-unfixed")
 			// The same ignore file the image scan honours. trivy reads neither
 			// on its own, so without this a repo's suppressions apply to its
 			// images and not to its tree -- one file, two answers, and no way
@@ -231,6 +229,13 @@ func semgrepConfigs(det detect.Result) []string {
 		cfgs = append(cfgs, "p/terraform")
 	}
 	return cfgs
+}
+
+// trivyArgs builds a trivy argv from its subcommand and the rest of its flags,
+// with the two flags that stop trivy reporting its install id, command and flags
+// to its maker (version check and telemetry) placed right after the subcommand.
+func trivyArgs(subcommand string, rest ...string) []string {
+	return append([]string{subcommand, "--skip-version-check", "--disable-telemetry"}, rest...)
 }
 
 // trivyArch maps GOARCH to trivy's asset token.

@@ -1,11 +1,82 @@
 package runner
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/detect"
 )
+
+// stubTrivy swaps the registry's trivy for a script that appends its argv to a
+// file, and returns that file's path.
+func stubTrivy(t *testing.T) string {
+	t.Helper()
+	argv := filepath.Join(t.TempDir(), "argv")
+	bin := filepath.Join(t.TempDir(), "trivy")
+	writeFile(t, filepath.Dir(bin), "trivy", "#!/bin/sh\necho \"$@\" >> "+argv+"\n")
+	if err := os.Chmod(bin, 0o700); err != nil { // #nosec G302 -- a test stand-in for the trivy binary
+		t.Fatal(err)
+	}
+	saved := registry
+	t.Cleanup(func() { registry = saved })
+	registry = []toolDef{{
+		name:   "trivy",
+		ensure: func(context.Context, string, string) (string, error) { return bin, nil },
+	}}
+	return argv
+}
+
+// Without both flags trivy reports its install id, command and flags to its
+// maker, so every trivy call carries them straight after the subcommand.
+func requireNoTelemetryFlags(t *testing.T, args []string, subcommand string) {
+	t.Helper()
+	want := []string{subcommand, "--skip-version-check", "--disable-telemetry"}
+	if len(args) < 3 || !slices.Equal(args[:3], want) {
+		t.Errorf("trivy argv = %v, want it to start with %v", args, want)
+	}
+}
+
+func TestTheFsScanSendsNothingToTheScannersMaker(t *testing.T) {
+	for _, td := range registry {
+		if td.name == "trivy" {
+			requireNoTelemetryFlags(t, td.invoke("trivy", t.TempDir(), "out.sarif", detect.Result{}).args, "fs")
+		}
+	}
+}
+
+func TestTheLicenseScanSendsNothingToTheScannersMaker(t *testing.T) {
+	argv := stubTrivy(t)
+	cfg := config.Config{Tools: map[string]config.ToolConfig{"trivy-license": {Enabled: true}}}
+	lock := Lock{Tools: map[string]LockEntry{"trivy": {Version: "1"}}}
+	licenseStep(context.Background(), cfg, lock, t.TempDir(), newOutcome())
+	got, err := os.ReadFile(argv) // #nosec G304 -- path is under the test's temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoTelemetryFlags(t, strings.Fields(string(got)), "fs")
+}
+
+func TestTheImageScanSendsNothingToTheScannersMaker(t *testing.T) {
+	argv := stubTrivy(t)
+	cfg := config.Config{
+		Images: []string{"nginx:1.31-alpine"},
+		Tools:  map[string]config.ToolConfig{"trivy": {Enabled: true, Mode: config.ModeBlock}},
+	}
+	lock := Lock{Tools: map[string]LockEntry{"trivy": {Version: "1"}}}
+	if _, err := ScanImages(context.Background(), t.TempDir(), cfg, lock); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(argv) // #nosec G304 -- path is under the test's temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoTelemetryFlags(t, strings.Fields(string(got)), "image")
+}
 
 func goRepo() detect.Result {
 	return detect.Result{Ecosystems: map[detect.Ecosystem]bool{detect.Go: true}}

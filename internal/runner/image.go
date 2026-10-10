@@ -97,8 +97,8 @@ func scanImage(ctx context.Context, bin, ignore, ref, prop string, out *Outcome)
 	outPath := outFile.Name()
 	_ = outFile.Close()
 	defer os.Remove(outPath)
-	args := []string{"image", "--quiet", "--format", "sarif",
-		"--ignore-unfixed", "--output", outPath}
+	args := trivyArgs("image", "--quiet", "--format", "sarif",
+		"--ignore-unfixed", "--output", outPath)
 	if ignore != "" {
 		args = append(args, "--ignorefile", ignore)
 	}

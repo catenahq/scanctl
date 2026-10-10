@@ -49,8 +49,8 @@ func licenseStep(ctx context.Context, cfg config.Config, lock Lock, root string,
 	// --severity HIGH,CRITICAL keeps the scan to restricted/forbidden licenses
 	// (copyleft, unknown) and drops the hundreds of permissive-license notices
 	// that would otherwise bury the report (one per transitive dependency).
-	args := []string{"fs", "--quiet", "--format", "sarif",
-		"--output", outPath, "--scanners", "license", "--severity", "HIGH,CRITICAL"}
+	args := trivyArgs("fs", "--quiet", "--format", "sarif",
+		"--output", outPath, "--scanners", "license", "--severity", "HIGH,CRITICAL")
 	if len(cfg.License.Ignored) > 0 {
 		args = append(args, "--ignored-licenses", strings.Join(cfg.License.Ignored, ","))
 	}
