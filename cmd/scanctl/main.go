@@ -239,10 +239,16 @@ func runCmd(args []string) int {
 		}
 	}
 
-	// A run that scanned only the pins its change touched writes no third-party
-	// image findings: uploaded, they would close the alerts of every image it
-	// skipped.
-	if err := report.WriteSARIF(out.Report, *outPath, pinsScoped); err != nil {
+	// A run that scanned only the pins its change touched, or whose scan of an
+	// image failed, writes no run in that image's category: uploaded, it would
+	// close the alerts of every image it did not scan.
+	if pinsScoped {
+		out.Incomplete[runner.ThirdPartyImages] = true
+	}
+	for c := range out.Incomplete {
+		fmt.Printf("sarif: the %s run in category %q is left out; its code-scanning alerts stay as they were\n", c.Tool, c.ID)
+	}
+	if err := report.WriteSARIF(out.Report, *outPath, out.Incomplete); err != nil {
 		fmt.Fprintln(os.Stderr, "write sarif:", err)
 		return 2
 	}

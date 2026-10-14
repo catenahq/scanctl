@@ -20,18 +20,16 @@ import (
 // WriteSARIF marshals rep to path with indentation, one run per tool and
 // category (the shape code scanning uploads, see
 // sarif.Report.OneRunPerCategory), after normalizing it so the output is
-// schema-valid (no null results arrays). partialImages leaves out the run in
-// sarif.ImageCategory: on a run that did not scan every third-party image it
-// would close the alerts of the images it skipped. rep keeps every finding for
-// the summary and the gate.
-func WriteSARIF(rep *sarif.Report, path string, partialImages bool) error {
+// schema-valid (no null results arrays). leaveOut names the categories whose
+// run is left out: a category the run did not scan whole, whose upload would
+// close the alerts of what it skipped. An upload without a category leaves its
+// alerts as they were. rep keeps every finding for the summary and the gate.
+func WriteSARIF(rep *sarif.Report, path string, leaveOut map[sarif.Category]bool) error {
 	rep.Normalize()
 	written := rep.OneRunPerCategory()
-	if partialImages {
-		written.Runs = slices.DeleteFunc(written.Runs, func(run sarif.Run) bool {
-			return run.AutomationDetails != nil && run.AutomationDetails.ID == sarif.ImageCategory
-		})
-	}
+	written.Runs = slices.DeleteFunc(written.Runs, func(run sarif.Run) bool {
+		return leaveOut[run.Category()]
+	})
 	data, err := json.MarshalIndent(written, "", "  ")
 	if err != nil {
 		return err

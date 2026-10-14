@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/detect"
+	"github.com/catenahq/scanctl/internal/gate"
+	"github.com/catenahq/scanctl/internal/report"
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
@@ -302,19 +305,168 @@ func TestScanImagesAppliesNoIgnoreFile(t *testing.T) {
 	}
 }
 
-func TestTagImageNamesTheImageOnEveryResult(t *testing.T) {
-	runs := []sarif.Run{{Results: []sarif.Result{
-		{RuleID: "CVE-1"},
-		{RuleID: "CVE-2", Properties: map[string]any{"k": "v"}},
-	}}}
-	tagImage(runs, sarif.ImageProperty, "postgres:18.6-alpine")
-	for _, r := range runs[0].Results {
+// Every result names its image, and every rule id, on the rules and the
+// results alike, names the image's repository: two images reporting one CVE
+// keep a rule each, and a bump keeps the id.
+func TestTagImageNamesTheImageOnEveryResultAndRule(t *testing.T) {
+	tag := func(ref string) sarif.Run {
+		runs := []sarif.Run{{
+			Tool: sarif.Tool{Driver: sarif.Driver{Rules: []sarif.Rule{{ID: "CVE-1"}, {ID: "CVE-2"}}}},
+			Results: []sarif.Result{
+				{RuleID: "CVE-1"},
+				{RuleID: "CVE-2", Properties: map[string]any{"k": "v"}},
+			},
+		}}
+		tagImage(runs, sarif.ImageProperty, ref)
+		return runs[0]
+	}
+	run := tag("postgres:18.6-alpine")
+	for i, r := range run.Results {
 		if r.Properties[sarif.ImageProperty] != "postgres:18.6-alpine" {
 			t.Errorf("%s: image = %v, want postgres:18.6-alpine", r.RuleID, r.Properties[sarif.ImageProperty])
 		}
+		if want := fmt.Sprintf("CVE-%d/postgres", i+1); r.RuleID != want || run.Tool.Driver.Rules[i].ID != want {
+			t.Errorf("rule ids = %s on the result, %s on the rule, want %s", r.RuleID, run.Tool.Driver.Rules[i].ID, want)
+		}
 	}
-	if runs[0].Results[1].Properties["k"] != "v" {
+	if run.Results[1].Properties["k"] != "v" {
 		t.Error("tagging dropped a property the scanner set")
+	}
+	if bumped := tag("postgres:18.7-alpine"); bumped.Results[0].RuleID != run.Results[0].RuleID {
+		t.Errorf("a bump moved the rule id from %s to %s", run.Results[0].RuleID, bumped.Results[0].RuleID)
+	}
+}
+
+// fakeTrivy stands in for trivy for the length of the test: an image scan
+// copies reports[ref] to its --output, and exits 1 with no report for a ref
+// reports does not hold.
+func fakeTrivy(t *testing.T, reports map[string]string) {
+	t.Helper()
+	dir := t.TempDir()
+	name := strings.NewReplacer("/", "_", ":", "_")
+	for ref, body := range reports {
+		writeFile(t, dir, name.Replace(ref)+".sarif", body)
+	}
+	bin := filepath.Join(t.TempDir(), "trivy")
+	writeFile(t, filepath.Dir(bin), "trivy", "#!/bin/sh\n"+
+		"for a; do\n  [ \"$prev\" = --output ] && out=$a\n  prev=$a\ndone\n"+
+		"src=\""+dir+"/$(printf %s \"$prev\" | tr /: __).sarif\"\n"+
+		"[ -f \"$src\" ] || exit 1\ncp \"$src\" \"$out\"\n")
+	if err := os.Chmod(bin, 0o700); err != nil { // #nosec G302 -- a test stand-in for the trivy binary
+		t.Fatal(err)
+	}
+	saved := registry
+	t.Cleanup(func() { registry = saved })
+	registry = []toolDef{{
+		name:   "trivy",
+		ensure: func(context.Context, string, string) (string, error) { return bin, nil },
+	}}
+}
+
+// trivyReport is trivy's SARIF for an image carrying cve, scored score.
+func trivyReport(cve, score string) string {
+	return `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Trivy","rules":[` +
+		`{"id":"` + cve + `","properties":{"security-severity":"` + score + `"}}]}},` +
+		`"results":[{"ruleId":"` + cve + `","level":"error",` +
+		`"message":{"text":"Package: libssl3\nInstalled Version: 3.5.7-r0"}}]}]}`
+}
+
+// scanAndWrite runs the image step over cfg's images, after an fs scan with
+// one finding, and writes the SARIF as scanctl run does. It returns the
+// outcome and the file code scanning uploads.
+func scanAndWrite(t *testing.T, cfg config.Config) (*Outcome, *sarif.Report) {
+	t.Helper()
+	cfg.Tools = map[string]config.ToolConfig{"trivy": {Enabled: true, Mode: config.ModeBlock}}
+	out := newOutcome()
+	out.Report.Merge(&sarif.Report{Runs: []sarif.Run{{
+		Tool:    sarif.Tool{Driver: sarif.Driver{Name: "trivy"}},
+		Results: []sarif.Result{{RuleID: "DS002", Message: sarif.Message{Text: "fs"}}},
+	}}})
+	lock := Lock{Tools: map[string]LockEntry{"trivy": {Version: "1"}}}
+	if err := imageStep(context.Background(), cfg, lock, t.TempDir(), "", out); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "scanctl.sarif")
+	if err := report.WriteSARIF(out.Report, path, out.Incomplete); err != nil {
+		t.Fatal(err)
+	}
+	written, err := sarif.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out, written
+}
+
+// Code scanning reads security-severity from the rule alone. Two images
+// reporting one CVE at different scores write a rule each, so each alert shows
+// the score its own image's scan reported, and the gate grades each the same.
+func TestAnImageAlertShowsItsOwnImagesScore(t *testing.T) {
+	fakeTrivy(t, map[string]string{
+		"redis:8.10.1":  trivyReport("CVE-2026-1", "9.8"),
+		"postgres:18.6": trivyReport("CVE-2026-1", "5.3"),
+	})
+	out, written := scanAndWrite(t, config.Config{Images: []string{"redis:8.10.1", "postgres:18.6"}})
+
+	want := map[string]string{"redis:8.10.1": "9.8", "postgres:18.6": "5.3"}
+	var images *sarif.Run
+	for i, run := range written.Runs {
+		if run.Category() == ThirdPartyImages {
+			images = &written.Runs[i]
+		}
+	}
+	if images == nil || len(images.Results) != 2 || len(images.Tool.Driver.Rules) != 2 {
+		t.Fatalf("written image run = %+v, want 2 findings under 2 rules", images)
+	}
+	rules := images.RulesByID()
+	for _, r := range images.Results {
+		ref, _ := r.Properties[sarif.ImageProperty].(string)
+		if got := rules[r.RuleID].Properties["security-severity"]; got != want[ref] {
+			t.Errorf("%s: alert %s scores %v, want %s as its scan reported", ref, r.RuleID, got, want[ref])
+		}
+	}
+
+	grade := map[string]config.Severity{"redis:8.10.1": config.SevCritical, "postgres:18.6": config.SevMedium}
+	for _, run := range out.Report.Runs {
+		for _, r := range run.Results {
+			ref, ok := r.Properties[sarif.ImageProperty].(string)
+			if got := gate.Severity("trivy", run.RulesByID(), r); ok && got != grade[ref] {
+				t.Errorf("%s: gate grades %s, want %s", ref, got, grade[ref])
+			}
+		}
+	}
+}
+
+// An image whose scan fails after its retry leaves its category out of the
+// SARIF: uploaded, the category's run would close that image's alerts. The
+// other category is written, and the report keeps every finding for the
+// summary and the gate.
+func TestAFailedImageScanLeavesItsCategoryOut(t *testing.T) {
+	fakeTrivy(t, map[string]string{
+		"redis:8.10.1": trivyReport("CVE-2026-1", "9.8"),
+		"app:ci":       trivyReport("CVE-2026-2", "7.5"),
+	})
+	for name, tc := range map[string]struct {
+		cfg    config.Config
+		failed string
+		want   sarif.Category
+	}{
+		"third-party": {config.Config{Images: []string{"redis:8.10.1", "gone:1"}, OwnImages: []string{"app:ci"}},
+			"gone:1", ownImages},
+		"own": {config.Config{Images: []string{"redis:8.10.1"}, OwnImages: []string{"app:ci", "gone:ci"}},
+			"gone:ci", ThirdPartyImages},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, written := scanAndWrite(t, tc.cfg)
+			if len(written.Runs) != 1 || written.Runs[0].Category() != tc.want {
+				t.Errorf("written runs = %+v, want the %v run alone", written.Runs, tc.want)
+			}
+			if out.Failed[tc.failed] == "" {
+				t.Errorf("Failed = %v, want %s listed", out.Failed, tc.failed)
+			}
+			if out.Report.ResultCount() != 3 {
+				t.Errorf("report findings = %d, want 3: fs, redis and app", out.Report.ResultCount())
+			}
+		})
 	}
 }
 

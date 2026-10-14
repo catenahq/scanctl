@@ -42,6 +42,21 @@ type AutomationDetails struct {
 	ID string `json:"id"`
 }
 
+// Category is what code scanning tracks a run's alerts under: its tool, and
+// its automationDetails id ("" for the upload's default).
+type Category struct {
+	Tool, ID string
+}
+
+// Category returns the tool and category r is filed under.
+func (r Run) Category() Category {
+	c := Category{Tool: r.Tool.Driver.Name}
+	if r.AutomationDetails != nil {
+		c.ID = r.AutomationDetails.ID
+	}
+	return c
+}
+
 // Tool names the producing scanner.
 type Tool struct {
 	Driver Driver `json:"driver"`
@@ -328,16 +343,14 @@ func (dst *Report) Merge(src *Report) {
 // images a scan covers: codeql-action upload-sarif refuses a file holding two
 // runs of one tool and automationDetails.id, and code scanning rejects a file
 // of more than 20 runs. A rule id several runs share keeps the first run's
+// rule; an image scan's rule ids name its image, so each image keeps its own
 // rule. The runs of r stay as they are.
 func (r *Report) OneRunPerCategory() *Report {
 	out := &Report{Schema: r.Schema, Version: r.Version, Runs: []Run{}}
-	index := map[string]int{}
-	rules := map[string]map[string]bool{}
+	index := map[Category]int{}
+	rules := map[Category]map[string]bool{}
 	for _, run := range r.Runs {
-		key := run.Tool.Driver.Name
-		if run.AutomationDetails != nil {
-			key += "\x00" + run.AutomationDetails.ID
-		}
+		key := run.Category()
 		i, seen := index[key]
 		if !seen {
 			i = len(out.Runs)

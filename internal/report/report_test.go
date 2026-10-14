@@ -39,7 +39,7 @@ func TestWriteSARIFUploadsWhateverTheNumberOfImages(t *testing.T) {
 	add("gosec", nil)
 
 	path := filepath.Join(t.TempDir(), "scanctl.sarif")
-	if err := WriteSARIF(rep, path, false); err != nil {
+	if err := WriteSARIF(rep, path, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path) // #nosec G304 -- path is under our temp dir
@@ -112,19 +112,30 @@ func scan(images ...sarif.Run) *sarif.Report {
 	return rep
 }
 
-// writeAndLoad writes rep as WriteSARIF does and reads back the file code
-// scanning uploads, split into the trivy run in the default category and the
-// one in sarif.ImageCategory (nil when absent).
-func writeAndLoad(t *testing.T, rep *sarif.Report, partialImages bool) (fs, images *sarif.Run) {
+// imageRuns is the tool and category of the third-party image scans.
+var imageRuns = sarif.Category{Tool: "trivy", ID: sarif.ImageCategory}
+
+// uploaded writes rep as WriteSARIF does and reads back the file code scanning
+// uploads.
+func uploaded(t *testing.T, rep *sarif.Report, leaveOut map[sarif.Category]bool) *sarif.Report {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "scanctl.sarif")
-	if err := WriteSARIF(rep, path, partialImages); err != nil {
+	if err := WriteSARIF(rep, path, leaveOut); err != nil {
 		t.Fatal(err)
 	}
-	written, err := sarif.Load(path)
+	out, err := sarif.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return out
+}
+
+// writeAndLoad writes rep as WriteSARIF does and reads back the file code
+// scanning uploads, split into the trivy run in the default category and the
+// one in sarif.ImageCategory (nil when absent).
+func writeAndLoad(t *testing.T, rep *sarif.Report, leaveOut map[sarif.Category]bool) (fs, images *sarif.Run) {
+	t.Helper()
+	written := uploaded(t, rep, leaveOut)
 	for i, run := range written.Runs {
 		if run.Tool.Driver.Name != "trivy" {
 			continue
@@ -153,7 +164,7 @@ func writeAndLoad(t *testing.T, rep *sarif.Report, partialImages bool) (fs, imag
 // default category alone, so the image alerts, in their own category, stay as
 // the last full scan left them.
 func TestWriteSARIFOfAPushThatScannedNoImage(t *testing.T) {
-	if _, images := writeAndLoad(t, scan(), true); images != nil {
+	if _, images := writeAndLoad(t, scan(), map[sarif.Category]bool{imageRuns: true}); images != nil {
 		t.Errorf("written image run = %+v, want none", images)
 	}
 }
@@ -163,7 +174,7 @@ func TestWriteSARIFOfAPushThatScannedNoImage(t *testing.T) {
 // of every image it did not scan. The summary and the gate still read them.
 func TestWriteSARIFOfAPushThatScannedOneImage(t *testing.T) {
 	rep := scan(imageScan("redis:8.10.1", 1))
-	if _, images := writeAndLoad(t, rep, true); images != nil {
+	if _, images := writeAndLoad(t, rep, map[sarif.Category]bool{imageRuns: true}); images != nil {
 		t.Errorf("written image run = %+v, want none", images)
 	}
 	if rep.ResultCount() != 4 {
@@ -175,13 +186,30 @@ func TestWriteSARIFOfAPushThatScannedOneImage(t *testing.T) {
 // clean image's empty run included, so the upload closes every image alert the
 // scan does not report.
 func TestWriteSARIFOfAFullScanFilesEveryImageInTheImageCategory(t *testing.T) {
-	_, images := writeAndLoad(t, scan(imageScan("redis:8.10.1", 2), imageScan("postgres:18.6", 1)), false)
+	_, images := writeAndLoad(t, scan(imageScan("redis:8.10.1", 2), imageScan("postgres:18.6", 1)), nil)
 	if images == nil || len(images.Results) != 3 {
 		t.Errorf("written image run = %+v, want the 3 image findings", images)
 	}
-	_, images = writeAndLoad(t, scan(imageScan("redis:8.10.1", 0)), false)
+	_, images = writeAndLoad(t, scan(imageScan("redis:8.10.1", 0)), nil)
 	if images == nil || len(images.Results) != 0 {
 		t.Errorf("written image run of a clean image = %+v, want an empty run", images)
+	}
+}
+
+// A failed scan of the repo's own image leaves trivy's default category out:
+// written, the fs scan's run would close that image's alerts. The other tools
+// and the image category are written as usual.
+func TestWriteSARIFLeavesOutTheDefaultCategoryOfAFailedOwnImage(t *testing.T) {
+	rep := scan(imageScan("redis:8.10.1", 1))
+	var got []sarif.Category
+	for _, run := range uploaded(t, rep, map[sarif.Category]bool{{Tool: "trivy"}: true}).Runs {
+		got = append(got, run.Category())
+	}
+	if want := []sarif.Category{{Tool: "gosec"}, imageRuns}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("written runs = %v, want %v", got, want)
+	}
+	if rep.ResultCount() != 4 {
+		t.Errorf("report findings = %d, want 4: the fs and own-image findings stay in the report", rep.ResultCount())
 	}
 }
 

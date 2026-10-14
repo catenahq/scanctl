@@ -15,6 +15,14 @@ import (
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
+// ThirdPartyImages is the tool and category the third-party image scans are
+// written under; the repo's own images join trivy's fs scan in the default
+// one.
+var (
+	ThirdPartyImages = sarif.Category{Tool: "trivy", ID: sarif.ImageCategory}
+	ownImages        = sarif.Category{Tool: "trivy"}
+)
+
 // imageStep scans each container image ref in cfg.Images -- plus every ref
 // resolved out of cfg.ImagePins, and each of cfg.OwnImages -- with trivy,
 // reusing the pinned trivy binary fetched for the fs scan. It is skipped when
@@ -23,8 +31,9 @@ import (
 // the step is recorded as "trivy-image" in out.Ran for visibility. Each
 // finding records its image under ImageProperty, or OwnImageProperty for an
 // image the repo builds. A ref whose scan fails is retried once (registry
-// pulls fail transiently), then recorded in out.Failed. ignore is the trivy
-// ignore file passed to every scan, or "" for none.
+// pulls fail transiently), then recorded in out.Failed, and its category in
+// out.Incomplete. ignore is the trivy ignore file passed to every scan, or ""
+// for none.
 //
 // The returned error is reserved for a pin that resolves to nothing, which is
 // a defect in scanctl.yml rather than a scan that went wrong: an unresolvable
@@ -34,16 +43,24 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 	if err != nil {
 		return err
 	}
-	type job struct{ ref, prop string }
+	type job struct {
+		ref, prop string
+		category  sarif.Category
+	}
 	var jobs []job
 	for _, ref := range refs {
-		jobs = append(jobs, job{ref, sarif.ImageProperty})
+		jobs = append(jobs, job{ref, sarif.ImageProperty, ThirdPartyImages})
 	}
 	for _, ref := range cfg.OwnImages {
-		jobs = append(jobs, job{ref, sarif.OwnImageProperty})
+		jobs = append(jobs, job{ref, sarif.OwnImageProperty, ownImages})
 	}
 	if len(jobs) == 0 {
 		return nil
+	}
+	unscanned := func(jobs ...job) {
+		for _, j := range jobs {
+			out.Incomplete[j.category] = true
+		}
 	}
 	tc, ok := cfg.Tools["trivy"]
 	if !ok || !tc.Enabled {
@@ -55,6 +72,7 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 		out.Warnings = append(out.Warnings, err.Error())
 		out.Skipped["trivy-image"] = "unpinned"
 		out.fail(cfg, "trivy", "trivy-image", "unpinned in tools.lock")
+		unscanned(jobs...)
 		return nil
 	}
 	bin, err := trivyEnsure(ctx, version)
@@ -62,6 +80,7 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: fetch failed: %v", err))
 		out.Skipped["trivy-image"] = "fetch failed"
 		out.fail(cfg, "trivy", "trivy-image", "fetch failed")
+		unscanned(jobs...)
 		return nil
 	}
 
@@ -77,6 +96,7 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 		}
 		if failure != "" {
 			out.fail(cfg, "trivy", j.ref, failure)
+			unscanned(j)
 		}
 	}
 	if ran {
@@ -121,13 +141,25 @@ func scanImage(ctx context.Context, bin, ignore, ref, prop string, out *Outcome)
 // diff. A third-party image's runs go in sarif.ImageCategory, a clean one's
 // too, so a run that scanned every image closes each image alert its scans do
 // not report.
+//
+// Every rule id, on the rules and the results alike, gains "/" and the
+// image's repository: code scanning reads a finding's security-severity from
+// its rule alone, so a CVE two images report under one rule shows one image's
+// score on both alerts. The repository, without the tag, keeps the id across a
+// bump.
 func tagImage(runs []sarif.Run, prop, ref string) {
+	id := func(rule string) string { return rule + "/" + sarif.ImageRepo(ref) }
 	for i := range runs {
 		if prop == sarif.ImageProperty {
 			runs[i].AutomationDetails = &sarif.AutomationDetails{ID: sarif.ImageCategory}
 		}
+		rules := runs[i].Tool.Driver.Rules
+		for j := range rules {
+			rules[j].ID = id(rules[j].ID)
+		}
 		for j := range runs[i].Results {
 			r := &runs[i].Results[j]
+			r.RuleID = id(r.RuleID)
 			if r.Properties == nil {
 				r.Properties = map[string]any{}
 			}

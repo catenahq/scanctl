@@ -26,10 +26,15 @@ type Outcome struct {
 	// report (tool, or image ref -> reason). A gate that passes without them
 	// would pass on findings nobody looked for, so the run fails on them.
 	Failed map[string]string
+	// Incomplete names each tool and category an image scan of which produced
+	// no report, whatever the tool's mode. Written, its run would close the
+	// alerts of the image that went unscanned, so the SARIF leaves it out.
+	Incomplete map[sarif.Category]bool
 }
 
 func newOutcome() *Outcome {
-	return &Outcome{Report: sarif.New(), Skipped: map[string]string{}, Failed: map[string]string{}}
+	return &Outcome{Report: sarif.New(), Skipped: map[string]string{}, Failed: map[string]string{},
+		Incomplete: map[sarif.Category]bool{}}
 }
 
 // fail records that the scan named key produced no report. It fails the run

@@ -303,9 +303,17 @@ scanning refuses a file holding two runs of one tool and category, or more
 than 20 runs, so the upload goes through whatever the number of images a scan
 covers. An analysis closes every alert of its tool and category it does not
 report and leaves the other categories' alerts as they were, so a run that
-scans only the pins its change touched writes no `images` run: an image alert
-opens or closes on a run that scans every pin, such as a scheduled one. The
-summary and the gate still read every image finding.
+scans only the pins its change touched writes no `images` run, and a run where
+an image's scan failed after its retry writes no run in that image's category
+(`images`, or trivy's default for an image the repo builds): an image alert
+opens or closes on a run that scans every image of its category, such as a
+scheduled one. Until then, the alerts of the images that did scan stay as they
+were too. The summary and the gate still read every image finding.
+
+Code scanning reads a finding's severity from its rule, so an image finding's
+rule id is the advisory followed by the image's repository
+(`CVE-2026-1234/postgres`): a CVE two images report shows each image's own
+score. The repository leaves out the tag, so a bump keeps the rule id.
 
 On a private repo without Advanced Security the code-scanning upload is a
 no-op, so the workflow also (a) posts the findings summary as one sticky PR
