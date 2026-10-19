@@ -264,8 +264,9 @@ scan means a suppression the operator wrote once takes effect in half the run,
 with nothing in the output saying which half. The cost is that an entry
 justified for one context applies in the other, so a CVE id suppressed because
 an image vendors an unpatched copy also stops gating on a first-party
-dependency of the same id. Keep the entries time-boxed (`expiredAt`): trivy
-stops honouring an entry once it lapses, which is what bounds that.
+dependency of the same id. Keep the entries time-boxed (`expired_at`, snake
+case; trivy 0.74 silently ignores `expiredAt`, so such an entry never lapses):
+trivy stops honouring an entry once it lapses, which is what bounds that.
 
 ### External SARIF (CodeQL and friends)
 

@@ -214,7 +214,7 @@ func TestTrivyIgnoreFilePrefersTheYamlForm(t *testing.T) {
 	writeFile(t, root, ".trivyignore", "CVE-1\n")
 	writeFile(t, root, ".trivyignore.yaml", "vulnerabilities:\n")
 	if got := trivyIgnoreFile(root); got != filepath.Join(root, ".trivyignore.yaml") {
-		t.Errorf("trivyIgnoreFile = %q, want the .yaml form (it carries the expiredAt entries)", got)
+		t.Errorf("trivyIgnoreFile = %q, want the .yaml form (it carries the expired_at entries)", got)
 	}
 }
 
