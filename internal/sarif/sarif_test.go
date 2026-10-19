@@ -183,6 +183,24 @@ func TestFingerprintKeepsALockfileVulnAcrossADependencyBump(t *testing.T) {
 	}
 }
 
+func TestFixedVersionReadsTheTrivyMessage(t *testing.T) {
+	if got := FixedVersion("trivy", trivyVuln("CVE-1", "libssl3", "3.5.7-r0", "a/a", "a/a:1")); got != "9.9.9" {
+		t.Errorf("FixedVersion = %q, want 9.9.9", got)
+	}
+}
+
+func TestFixedVersionIsEmptyWhenTheMessageHasNone(t *testing.T) {
+	for name, tc := range map[string]struct{ tool, msg string }{
+		"an empty Fixed Version line": {"trivy", "Package: p\nInstalled Version: 1\nFixed Version: \nLink: x"},
+		"a secret message":            {"trivy", "Asymmetric Private Key\nSeverity: HIGH\nMatch: ****"},
+		"an osv-scanner message":      {"osv-scanner", "Package 'a@1' is vulnerable to 'CVE-1'.\nFixed Version: 2"},
+	} {
+		if got := FixedVersion(tc.tool, Result{Message: Message{Text: tc.msg}}); got != "" {
+			t.Errorf("%s: FixedVersion = %q, want empty", name, got)
+		}
+	}
+}
+
 func TestVulnPackageReadsAScopedNpmName(t *testing.T) {
 	got, ok := vulnPackage("osv-scanner", "Package '@scope/pkg@1.2.3' is vulnerable to 'GHSA-x'.")
 	if !ok || got != "@scope/pkg" {

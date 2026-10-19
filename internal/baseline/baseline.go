@@ -5,11 +5,16 @@
 // (kind: external) in the current report rather than dropped: the gate already
 // skips suppressed findings, GitHub renders them dismissed, and the full set
 // stays auditable in the SARIF and the dashboards.
+//
+// A committed baseline entry may carry an end date (AcceptedUntil): from the
+// day after it the entry accepts nothing. An entry for a third-party image
+// finding must carry one.
 package baseline
 
 import (
 	"os"
 	"strings"
+	"time"
 
 	"github.com/catenahq/scanctl/internal/sarif"
 )
@@ -34,16 +39,61 @@ type Entry struct {
 	Result sarif.Result
 }
 
+// AcceptedUntil is the result property holding the last day (YYYY-MM-DD) an
+// entry accepts its finding.
+const AcceptedUntil = "acceptedUntil"
+
+const dateLayout = "2006-01-02"
+
+// Split separates base into the entries that accept findings on the day today
+// and the expired ones. An entry is expired when its date is unparseable or
+// before today, or when it carries sarif.ImageProperty and no date. live holds
+// every other entry, in the runs of base.
+func Split(base *sarif.Report, today time.Time) (live *sarif.Report, expired []Entry) {
+	live = &sarif.Report{Schema: base.Schema, Version: base.Version}
+	for _, run := range base.Runs {
+		kept := run
+		kept.Results = nil
+		for _, r := range run.Results {
+			if Expired(r, today) {
+				expired = append(expired, Entry{Tool: run.Tool.Driver.Name, Result: r})
+				continue
+			}
+			kept.Results = append(kept.Results, r)
+		}
+		live.Runs = append(live.Runs, kept)
+	}
+	return live, expired
+}
+
+// Expired reports whether the baseline entry r accepts nothing on the day
+// today: see Split.
+func Expired(r sarif.Result, today time.Time) bool {
+	raw, dated := r.Properties[AcceptedUntil]
+	if !dated {
+		_, image := r.Properties[sarif.ImageProperty]
+		return image
+	}
+	s, _ := raw.(string)
+	until, err := time.Parse(dateLayout, s)
+	return err != nil || until.Format(dateLayout) < today.UTC().Format(dateLayout)
+}
+
 // Stale returns the baseline entries that match nothing in cur: accepted
 // findings that are fixed or moved, which the baseline would suppress again if
 // they came back. N current instances of a fingerprint cover N baseline
-// entries.
-func Stale(base, cur *sarif.Report) []Entry {
+// entries. An image entry is judged only when imagesWhole says cur scanned
+// every image: a run that scanned some of them cannot tell an image finding
+// that is fixed from one it did not look for.
+func Stale(base, cur *sarif.Report, imagesWhole bool) []Entry {
 	have := fingerprints(cur)
 	var stale []Entry
 	for _, run := range base.Runs {
 		tool := run.Tool.Driver.Name
 		for _, r := range run.Results {
+			if _, image := r.Properties[sarif.ImageProperty]; image && !imagesWhole {
+				continue
+			}
 			if fp := sarif.Fingerprint(tool, r); have[fp] > 0 {
 				have[fp]--
 				continue

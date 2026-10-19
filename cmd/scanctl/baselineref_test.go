@@ -253,24 +253,44 @@ func TestResolveBaseRefOutsideActionsComparesWithNothing(t *testing.T) {
 	}
 }
 
-// With no change to grade, an image CVE was introduced by nothing: it is
-// reported. A finding in the repo's own tree is untouched and still gates.
-func TestReportImageFindingsLeavesTheTreeGating(t *testing.T) {
-	rep := &sarif.Report{Runs: []sarif.Run{{
+// On a run that grades no change, a third-party image finding with no fixed
+// version is suppressed; every other finding keeps gating.
+func unfixedImageReport() *sarif.Report {
+	const fixed = "Package: libssl3\nInstalled Version: 3.5.7-r0\nVulnerability CVE-1\nSeverity: HIGH\nFixed Version: 3.5.8-r0\nLink: x"
+	return &sarif.Report{Runs: []sarif.Run{{
 		Tool: sarif.Tool{Driver: sarif.Driver{Name: "trivy"}},
 		Results: []sarif.Result{
-			{RuleID: "CVE-1", Properties: map[string]any{sarif.ImageProperty: "postgres:18"}},
-			{RuleID: "CVE-2"},
+			{RuleID: "CVE-1", Message: sarif.Message{Text: fixed}, Properties: map[string]any{sarif.ImageProperty: "postgres:18"}},
+			{RuleID: "private-key", Message: sarif.Message{Text: "Asymmetric Private Key"}, Properties: map[string]any{sarif.ImageProperty: "postgres:18"}},
+			{RuleID: "CVE-2", Message: sarif.Message{Text: fixed}},
+			{RuleID: "CVE-3", Message: sarif.Message{Text: fixed}, Properties: map[string]any{sarif.OwnImageProperty: "app:ci"}},
 		},
 	}}}
-	if n := reportImageFindings(rep); n != 1 {
-		t.Fatalf("marked %d, want the image finding only", n)
+}
+
+func TestAnImageVulnerabilityWithAFixStaysUnsuppressed(t *testing.T) {
+	rep := unfixedImageReport()
+	reportUnfixedImageFindings(rep)
+	if rep.Runs[0].Results[0].Suppressed() {
+		t.Error("an image vulnerability with a fixed version must gate on a run that grades no change")
 	}
-	if s := rep.Runs[0].Results[0].Suppressions; len(s) != 1 || s[0].Justification != sarif.NoChange {
-		t.Errorf("image finding suppressions = %v", s)
+}
+
+func TestAnImageFindingWithNoFixedVersionIsSuppressed(t *testing.T) {
+	rep := unfixedImageReport()
+	if n := reportUnfixedImageFindings(rep); n != 1 {
+		t.Fatalf("marked %d, want the secret only", n)
 	}
-	if rep.Runs[0].Results[1].Suppressed() {
-		t.Error("a finding in the tree must keep gating")
+	if s := rep.Runs[0].Results[1].Suppressions; len(s) != 1 || s[0].Justification != sarif.NoFixedVersion {
+		t.Errorf("image secret suppressions = %v, want NoFixedVersion", s)
+	}
+}
+
+func TestTreeAndOwnImageFindingsAreLeftAloneOnARunThatGradesNoChange(t *testing.T) {
+	rep := unfixedImageReport()
+	reportUnfixedImageFindings(rep)
+	if rep.Runs[0].Results[2].Suppressed() || rep.Runs[0].Results[3].Suppressed() {
+		t.Error("a finding in the tree or an own image must keep gating")
 	}
 }
 

@@ -103,17 +103,19 @@ func resolveBaseRef(ctx context.Context, root, flag string) string {
 	return ""
 }
 
-// reportImageFindings marks every image-scan finding suppressed (kind:
-// external) on a run that grades no change: a CVE in a third-party image is
-// upstream's to fix, and with nothing changed this run introduced none of
-// them. They stay in the report and the SARIF. Returns how many it marked.
-func reportImageFindings(rep *sarif.Report) int {
+// reportUnfixedImageFindings marks suppressed (kind: external) the third-party
+// image findings that have no fixed version, on a run that grades no change:
+// nothing upstream has shipped can fix them. An image finding with a fixed
+// version stays unsuppressed and gates. The marked findings stay in the report
+// and the SARIF. Returns how many it marked.
+func reportUnfixedImageFindings(rep *sarif.Report) int {
 	n := 0
 	for ri := range rep.Runs {
+		tool := rep.Runs[ri].Tool.Driver.Name
 		for i := range rep.Runs[ri].Results {
 			r := &rep.Runs[ri].Results[i]
-			if _, ok := r.Properties[sarif.ImageProperty]; ok && !r.Suppressed() {
-				r.Suppressions = append(r.Suppressions, sarif.Suppression{Kind: "external", Justification: sarif.NoChange})
+			if _, ok := r.Properties[sarif.ImageProperty]; ok && !r.Suppressed() && sarif.FixedVersion(tool, *r) == "" {
+				r.Suppressions = append(r.Suppressions, sarif.Suppression{Kind: "external", Justification: sarif.NoFixedVersion})
 				n++
 			}
 		}
@@ -155,7 +157,7 @@ func mergeBase(ctx context.Context, root, ref string) (string, error) {
 // Dropping it does not weaken the gate; it declines to pull and scan an image
 // twice to prove a zero, which on a repo pinning nine of them is most of a
 // run. A run without -baseline-ref keeps every pin, which is how a scheduled
-// run reports the CVEs in an image nobody touched.
+// run gates on the CVEs in an image nobody touched.
 //
 // A glob pin becomes one pin per file it matches among the changed files, so a
 // change to one of many files a glob covers scans that file's images only. A

@@ -4,9 +4,9 @@ name: scanctl
 # scanctl is fetched with `go install` (tools.lock is embedded, so the scanner
 # pins travel with it); the scanners themselves are lazy-fetched at scan time.
 # Findings in the repo's own tree, and in an image the repo builds (pre-scan +
-# own-images), gate on every run. CVEs in the images it pins gate only when a
-# pull_request or push introduces them; scanctl reads the commit to compare
-# with from the event.
+# own-images), gate on every run. CVEs in the images it pins gate when a
+# pull_request or push introduces them, and on a scheduled run whenever a fix
+# exists; scanctl reads the commit to compare with from the event.
 #
 # The caller's job must grant all three permissions below: GitHub refuses to
 # start a run whose called job asks for more than the caller granted.
@@ -17,7 +17,7 @@ name: scanctl
 #       uses: catenahq/scanctl/.github/workflows/github-reusable.yml@main
 #       with:
 #         scanctl-version: v0.1.0
-#         # baseline: .scanctl/baseline.sarif   # optional: findings accepted for good
+#         # baseline: .scanctl/baseline.sarif   # default; accepted findings, may expire
 #         # pre-scan: docker buildx build -t app:ci .   # optional: build an own image
 #         # own-images: app:ci                           # gated on every run
 #       # secrets:                 # optional: Docker Hub pulls, logged in
@@ -48,9 +48,9 @@ on:
         type: string
         default: ""
       baseline:
-        description: optional committed baseline SARIF of findings accepted for good; they are suppressed on every run, and an entry the scan no longer produces fails it (missing file = no-op)
+        description: committed baseline SARIF of accepted findings; an entry may expire (acceptedUntil); missing file = no-op
         type: string
-        default: ""
+        default: .scanctl/baseline.sarif
       dismiss-baseline:
         description: also close the matching GitHub code-scanning alert for every finding the baseline accepted (GitHub does not act on SARIF "external" suppressions on its own). Only applies when baseline is set; always skipped on pull_request events.
         type: boolean

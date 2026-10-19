@@ -133,7 +133,7 @@ type Result struct {
 
 // Suppression marks a result the producing tool suppressed. Kind is "inSource"
 // (e.g. nosemgrep) or "external" (scanctl's own); Justification says which of
-// scanctl's reasons applied (AcceptedInBaseline, PresentBefore, NoChange).
+// scanctl's reasons applied (AcceptedInBaseline, PresentBefore, NoFixedVersion).
 type Suppression struct {
 	Kind          string `json:"kind,omitempty"`
 	Justification string `json:"justification,omitempty"`
@@ -141,12 +141,13 @@ type Suppression struct {
 
 // Justifications scanctl records on its external suppressions.
 const (
-	// AcceptedInBaseline: listed in the committed baseline, accepted for good.
+	// AcceptedInBaseline: listed in the committed baseline: accepted until its date, or for good when a tree entry has none.
 	AcceptedInBaseline = "accepted in the committed scanctl baseline"
 	// PresentBefore: an image finding the commit before the change already had.
 	PresentBefore = "present before this change"
-	// NoChange: an image finding on a run that grades no change.
-	NoChange = "image finding on a run that grades no change"
+	// NoFixedVersion: an image finding with no fixed version, on a run that
+	// grades no change.
+	NoFixedVersion = "image finding with no fixed version on a run that grades no change"
 )
 
 // Suppressed reports whether this result is suppressed (in source or by a
@@ -243,6 +244,21 @@ func vulnPackage(tool, msg string) (string, bool) {
 		return spec[:at], true
 	}
 	return "", false
+}
+
+// FixedVersion reads the "Fixed Version: " line of a trivy vulnerability
+// message. It is "" for any other tool, and for a message with no such line or
+// an empty value (a secret finding).
+func FixedVersion(tool string, r Result) string {
+	if tool != "trivy" {
+		return ""
+	}
+	for _, line := range strings.Split(r.Message.Text, "\n") {
+		if v, ok := strings.CutPrefix(line, "Fixed Version: "); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // ImageRepo is an image ref without its tag or digest: the name an image keeps

@@ -112,7 +112,7 @@ func TestDismissLeavesAFindingSuppressedOnlyByTheDiffOpen(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	for _, why := range []string{sarif.PresentBefore, sarif.NoChange} {
+	for _, why := range []string{sarif.PresentBefore, sarif.NoFixedVersion} {
 		r := result("trivy", "CVE-2026-1", "oauth2-proxy/oauth2-proxy", 1, false)
 		r.Suppressions = []sarif.Suppression{{Kind: "external", Justification: why}}
 		c := Client{BaseURL: srv.URL, Owner: "o", Repo: "r", Token: "secret", HTTPClient: srv.Client()}

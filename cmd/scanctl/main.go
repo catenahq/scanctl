@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/catenahq/scanctl"
 	"github.com/catenahq/scanctl/internal/baseline"
@@ -43,6 +44,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		os.Exit(runCmd(os.Args[2:]))
+	case "accept":
+		os.Exit(acceptCmd(os.Args[2:]))
 	case "version", "-v", "--version":
 		fmt.Println("scanctl", version)
 	case "help", "-h", "--help":
@@ -59,7 +62,15 @@ func usage() {
 
 usage:
   scanctl run [flags] [path]   detect, scan, merge SARIF, gate (path default ".")
+  scanctl accept -until date [flags] sarif
+                               accept the gating third-party image findings of a
+                               run's SARIF in the committed baseline until date
   scanctl version
+
+accept flags:
+  -until string    last day the findings are accepted, YYYY-MM-DD, after today
+  -config string   path to scanctl.yml (default "scanctl.yml"; missing = defaults)
+  -baseline string baseline SARIF to write (default ".scanctl/baseline.sarif")
 
 run flags:
   -config string   path to scanctl.yml (default "scanctl.yml"; missing = defaults)
@@ -68,9 +79,9 @@ run flags:
   -out string      merged SARIF output path (default "scanctl.sarif")
   -summary string  markdown summary output path (default: stdout only)
   -sbom string     write a CycloneDX SBOM to this path (syft)
-  -baseline string optional SARIF of findings accepted for good; they are
-                   suppressed on every run, and an entry the scan no longer
-                   produces fails it (missing file = no-op)
+  -baseline string optional SARIF of accepted findings; they are suppressed on
+                   every run, an entry may expire (acceptedUntil), and an entry
+                   the scan no longer produces fails it (missing file = no-op)
   -dismiss-baseline
                    also close the matching GitHub code-scanning alert for every
                    finding the -baseline accepted (GitHub does not act on SARIF
@@ -83,8 +94,8 @@ run flags:
                    image CVEs the change introduces gate. Findings in the
                    repo's own tree gate either way. Empty inside GitHub
                    Actions: read from the event (pull request: its target
-                   branch; push: the commit before it). With no ref, image
-                   findings are reported, not gated
+                   branch; push: the commit before it). With no ref, an image
+                   vulnerability with a fix gates like a finding in the tree
   -own-image string
                    an image this repo builds (e.g. the tag the workflow's
                    docker build produced); scanned like images, but its
@@ -186,11 +197,13 @@ func runCmd(args []string) int {
 		fmt.Printf("imported %d finding(s) from %s\n", ext.ResultCount(), p)
 	}
 
-	// Image CVEs are upstream's to fix: only the ones a change INTRODUCES gate.
-	// With a base, the images it pinned are scanned and their findings
+	// Image CVEs are upstream's to fix: against a base, only the ones a change
+	// INTRODUCES gate. With a base, the images it pinned are scanned and their findings
 	// suppressed; a failed base scan degrades to the full gate (stricter,
-	// never looser) with a warning. With no change to grade, no image finding
-	// was introduced, so all of them are reported.
+	// never looser) with a warning. With no change to grade, nothing was
+	// introduced: every image finding with a fixed version gates, which is how a
+	// scheduled run catches a CVE in an image nobody touched, and one with no
+	// fixed version is reported.
 	if baseSha != "" {
 		set, err := baselineRefSet(context.Background(), root, baseSha, *cfgPath, *profile, cfg, lock)
 		if err != nil {
@@ -199,15 +212,18 @@ func runCmd(args []string) int {
 			fmt.Printf("baseline-ref: suppressed %d image finding(s) already present at %.12s\n", n, baseSha)
 		}
 	} else if baseRef == "" {
-		if n := reportImageFindings(out.Report); n > 0 {
-			fmt.Printf("no change to grade: %d image finding(s) reported, not gated\n", n)
+		if n := reportUnfixedImageFindings(out.Report); n > 0 {
+			fmt.Printf("no change to grade: %d image finding(s) with no fixed version reported, not gated; every other image finding gates\n", n)
 		}
 	}
 
-	// Findings accepted for good in a committed baseline are marked suppressed
-	// (kind: external) on every run. An entry matching nothing in this scan
-	// fails the run: it would accept the finding again if it came back.
-	var stale []baseline.Entry
+	// Findings a committed baseline accepts (until an entry's date; a tree entry
+	// with none accepts for good) are marked suppressed (kind: external) on every
+	// run. An entry matching nothing in this scan
+	// fails the run: it would accept the finding again if it came back. An
+	// expired entry accepts nothing, so its finding gates; an image entry is
+	// judged stale only by a run that scanned every image.
+	var stale, expired []baseline.Entry
 	if *baselinePath != "" {
 		baseRep, err := baseline.LoadReport(*baselinePath)
 		if err != nil {
@@ -215,10 +231,13 @@ func runCmd(args []string) int {
 			return 2
 		}
 		if baseRep != nil {
-			if n := baseline.Apply(out.Report, baseline.FromReport(baseRep)); n > 0 {
+			live, exp := baseline.Split(baseRep, time.Now())
+			expired = exp
+			if n := baseline.Apply(out.Report, baseline.FromReport(live)); n > 0 {
 				fmt.Printf("baseline: suppressed %d known finding(s) from %s\n", n, *baselinePath)
 			}
-			stale = baseline.Stale(baseRep, out.Report)
+			imagesWhole := !pinsScoped && !out.Incomplete[runner.ThirdPartyImages]
+			stale = baseline.Stale(baseRep, out.Report, imagesWhole)
 		}
 
 		// The SARIF suppression above never closes the GitHub alert itself
@@ -257,7 +276,7 @@ func runCmd(args []string) int {
 	uploadResults(ctx, cfg, *outPath)
 	sbomStep(ctx, cfg, lock, root, *sbomOut)
 
-	summary := report.Summary(out.Report, cfg) + staleSection(*baselinePath, stale) + failedSection(out.Failed)
+	summary := report.Summary(out.Report, cfg) + staleSection(*baselinePath, stale) + expiredSection(*baselinePath, expired) + failedSection(out.Failed)
 	fmt.Print(summary)
 	fmt.Printf("\nran: %v\n", out.Ran)
 	if *summaryPath != "" {
@@ -315,6 +334,26 @@ func staleSection(path string, stale []baseline.Entry) string {
 			where = " (" + e.Result.Locations[0].PhysicalLocation.ArtifactLocation.URI + ")"
 		}
 		fmt.Fprintf(&b, "- [%s] %s%s\n", e.Tool, e.Result.RuleID, where)
+	}
+	return b.String()
+}
+
+// expiredSection lists the committed baseline entries that accept nothing
+// because their date has passed or an image entry has none; "" when there are
+// none.
+func expiredSection(path string, expired []baseline.Entry) string {
+	if len(expired) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n### Expired baseline entries (%d)\n\n", len(expired))
+	fmt.Fprintf(&b, "%s holds entries that accept nothing now. Their findings gate. Renew or remove them.\n\n", path)
+	for _, e := range expired {
+		until, ok := e.Result.Properties[baseline.AcceptedUntil].(string)
+		if !ok {
+			until = "no date"
+		}
+		fmt.Fprintf(&b, "- [%s] %s (%s)\n", e.Tool, e.Result.RuleID, until)
 	}
 	return b.String()
 }

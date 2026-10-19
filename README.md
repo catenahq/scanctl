@@ -84,8 +84,9 @@ scanctl run .                 # detect, scan, merge SARIF, gate
 scanctl run --no-gate .       # scan + report, always exit 0
 scanctl run --out out.sarif --summary summary.md ./subdir
 scanctl run --baseline-ref origin/main .            # image CVEs gate only if new vs the merge-base
-scanctl run --baseline .scanctl/baseline.sarif .   # findings accepted for good never gate
+scanctl run --baseline .scanctl/baseline.sarif .   # accepted findings never gate
 scanctl run --import codeql.sarif .                 # fold in external SARIF
+scanctl accept --until 2026-12-31 scanctl.sarif     # accept a run's gating image findings until a date
 ```
 
 Exit code is non-zero when a tool in `block` mode produces a finding at or above
@@ -128,10 +129,14 @@ Inside GitHub Actions, with no `--baseline-ref` given, scanctl reads the ref
 from the event: a pull request diffs against `origin/<base>`, a push against
 the commit the branch held before it (or the default branch, when the push
 created the branch or that commit is not in the clone). A run with no ref --
-scheduled, manual, or outside Actions -- grades no change, so it reports every
-image finding without gating on it; that is where a CVE published against an
-image nobody touched surfaces. Every caller, the reusable workflow or an
-inline `scanctl run`, gets the same behaviour.
+scheduled, manual, or outside Actions -- grades no change, so it grades the
+images as they are: every third-party image vulnerability at or above the floor
+that has a fixed version fails it. That is where a CVE published against an
+image nobody touched surfaces. An image finding with no fixed version, such as
+a placeholder key trivy finds in an image, is reported without gating. A CVE no
+image tag ships the fix for yet is accepted, for a while, in the committed
+baseline. Every caller, the reusable workflow or an inline `scanctl run`, gets
+the same behaviour.
 
 A dependency vulnerability in an image is matched across the two scans by
 advisory, package, and image repository. The match ignores the installed
@@ -141,13 +146,21 @@ finding, and a bump that adds an advisory adds one.
 ### Committed baseline (optional)
 
 `--baseline <sarif>` suppresses, on every run, the findings recorded in a
-committed SARIF: findings a human has reviewed and accepted for good. A finding
+committed SARIF: findings a human has reviewed and accepted. A finding
 in it is marked suppressed (`kind: external`) in the merged SARIF -- the gate
 skips it, and it stays in the SARIF for audit. An entry the scan no longer
 produces fails the run and is listed under "Stale baseline entries": it would
 accept the finding again if it came back, so it is removed instead. A missing
 baseline file is a no-op. The reusable workflow exposes it as the `baseline`
-input.
+input, defaulting to `.scanctl/baseline.sarif`.
+
+An entry may carry an `acceptedUntil` date (`YYYY-MM-DD`) in its properties.
+After that date it accepts nothing, the summary lists it under "Expired
+baseline entries", and its finding gates again. An entry for a third-party
+image finding needs a date: without one it accepts nothing. A run that scanned
+only the pins its change touched leaves image entries alone; a run that scanned
+every image (a scheduled one) fails on an image entry it no longer produces,
+like any other stale entry.
 
 GitHub's code-scanning SARIF ingestion does **not** act on `kind: external`
 suppressions -- confirmed empirically (a baselined finding stays open on the
@@ -169,6 +182,10 @@ what the org has accepted repo-wide. The reusable workflow enables it by
 default (`dismiss-baseline: true`) whenever `baseline` is set.
 
 #### Seeding or regenerating a baseline
+
+This recipe seeds the findings in the repo's own tree. Third-party image
+findings carry no end date here, so they would accept nothing: they go through
+`scanctl accept` (below).
 
 ```sh
 scanctl run --profile full --out current.sarif --sbom /tmp/sbom.json \
@@ -192,6 +209,25 @@ consumer repo's own `.scanctl/README.md` should record repo-specific context
 (what's baselined here and why) and link back here for the mechanism, rather
 than restating it -- see `catenahq/docs/.scanctl/README.md` for an example of
 that split.
+
+#### Accepting image findings
+
+A CVE no image tag fixes yet fails the scheduled run until it is accepted.
+Download the scheduled run's `scanctl-results` artifact and run:
+
+```sh
+scanctl accept --until 2026-12-31 scanctl.sarif
+```
+
+It reads the SARIF, writes each third-party image finding that gates (a fixed
+version, at or above the floor, from a block-mode tool) into
+`.scanctl/baseline.sarif` dated `--until`, and prints how many entries it
+added, renewed, removed and kept. A live entry keeps its date, an expired one
+takes the new date, and an entry the SARIF no longer reports is dropped when
+the SARIF holds a run that scanned every image. Entries for the repo's own tree
+are untouched. Flags: `--until` (required, after today), `--config` (default
+`scanctl.yml`), `--baseline` (default `.scanctl/baseline.sarif`). Review the
+diff, then commit it.
 
 ### Image scanning: `images` and `image_pins`
 
@@ -246,7 +282,7 @@ the change touches, one pin per file, leaving out a file the change deleted.
 An untouched pin resolves to the same ref on both sides, so scanning it twice
 can only produce findings that suppress each other -- and on a repo pinning
 nine images, proving that zero is most of a run. A run without
-`--baseline-ref` keeps every pin, which is how the scheduled report covers an
+`--baseline-ref` keeps every pin, which is how the scheduled run gates on an
 image nobody touched. A pin the change ADDS has nothing to resolve at the
 merge base; that is a pin with no baseline, so all of its findings gate.
 
@@ -335,7 +371,7 @@ refuses to start the run.
 ## Layout
 
 ```
-cmd/scanctl       CLI (run | version)
+cmd/scanctl       CLI (run | accept | version)
 internal/detect   manifest-glob router (ecosystems + workflows present)
 internal/runner   lazy-fetch + subprocess orchestration + SARIF merge
                   (registry tools + guarddog/image per-manifest/per-ref steps)
