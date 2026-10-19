@@ -17,19 +17,30 @@ import (
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
+// maxUploadResults is the most results of one run that code scanning keeps
+// (the most severe); it rejects a file with a run of more than 25,000.
+const maxUploadResults = 5000
+
 // WriteSARIF marshals rep to path with indentation, one run per tool and
 // category (the shape code scanning uploads, see
 // sarif.Report.OneRunPerCategory), after normalizing it so the output is
 // schema-valid (no null results arrays). leaveOut names the categories whose
 // run is left out: a category the run did not scan whole, whose upload would
 // close the alerts of what it skipped. An upload without a category leaves its
-// alerts as they were. rep keeps every finding for the summary and the gate.
+// alerts as they were. A written run holds at most maxUploadResults results,
+// the most severe, and is named by Run.UploadTool. rep keeps every finding for
+// the summary and the gate.
 func WriteSARIF(rep *sarif.Report, path string, leaveOut map[sarif.Category]bool) error {
 	rep.Normalize()
 	written := rep.OneRunPerCategory()
 	written.Runs = slices.DeleteFunc(written.Runs, func(run sarif.Run) bool {
 		return leaveOut[run.Category()]
 	})
+	for i := range written.Runs {
+		run := &written.Runs[i]
+		trimToMostSevere(run, maxUploadResults)
+		run.Tool.Driver.Name = run.UploadTool()
+	}
 	data, err := json.MarshalIndent(written, "", "  ")
 	if err != nil {
 		return err
@@ -37,6 +48,39 @@ func WriteSARIF(rep *sarif.Report, path string, leaveOut map[sarif.Category]bool
 	// #nosec G306 -- a SARIF report is non-sensitive output meant to be read by
 	// CI steps and humans; 0644 is intentional
 	return os.WriteFile(path, data, 0o644)
+}
+
+// trimToMostSevere cuts run to its limit most severe results (ties go to the
+// earlier one; the kept results keep their order) and to the rules those
+// results reference. The run's slices are replaced, never edited in place.
+func trimToMostSevere(run *sarif.Run, limit int) {
+	if len(run.Results) <= limit {
+		return
+	}
+	rules := run.RulesByID()
+	rank := make([]int, len(run.Results))
+	order := make([]int, len(run.Results))
+	for i, res := range run.Results {
+		rank[i] = gate.Severity(run.Tool.Driver.Name, rules, res).Rank()
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return rank[order[a]] > rank[order[b]] })
+	order = order[:limit]
+	sort.Ints(order)
+	kept := make([]sarif.Result, 0, limit)
+	used := map[string]bool{}
+	for _, i := range order {
+		kept = append(kept, run.Results[i])
+		used[run.Results[i].RuleID] = true
+	}
+	var keptRules []sarif.Rule
+	for _, rule := range run.Tool.Driver.Rules {
+		if used[rule.ID] {
+			keptRules = append(keptRules, rule)
+		}
+	}
+	run.Results = kept
+	run.Tool.Driver.Rules = keptRules
 }
 
 // finding is a flattened result row for the human-readable lists.

@@ -335,7 +335,13 @@ jobs:
 
 The SARIF scanctl writes holds one run per tool and code-scanning category:
 the fs scan and the own images are one trivy run, the third-party images
-(`images:` and `image_pins:`) a second one, in the category `images`. Code
+(`images:` and `image_pins:`) a second one, uploaded as tool `trivy-image` in
+the category `images/`. A written run keeps its 5,000 most severe results,
+GitHub's own cap (it rejects a run over 25,000 whole); the summary, the gate
+and `--dismiss-baseline` still read every finding. A repository that uploaded
+image findings as tool `trivy`, category `images`, deletes that configuration
+once, after the first run with this version (Security and quality, Code
+scanning, Tool status, Trivy, `images`, Delete configuration). Code
 scanning refuses a file holding two runs of one tool and category, or more
 than 20 runs, so the upload goes through whatever the number of images a scan
 covers. An analysis closes every alert of its tool and category it does not

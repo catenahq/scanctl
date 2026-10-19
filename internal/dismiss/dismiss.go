@@ -82,7 +82,7 @@ type alert struct {
 func (c Client) Dismiss(ctx context.Context, rep *sarif.Report) (int, error) {
 	wanted := map[string]bool{}
 	for _, run := range rep.Runs {
-		tool := run.Tool.Driver.Name
+		tool := run.UploadTool()
 		for _, r := range run.Results {
 			if !acceptedInBaseline(r) || len(r.Locations) == 0 {
 				continue
@@ -130,8 +130,10 @@ func acceptedInBaseline(r sarif.Result) bool {
 	return false
 }
 
+// matchKey lowercases the tool: the alerts API names it "Trivy" where the
+// uploaded SARIF says "trivy".
 func matchKey(tool, ruleID, path string, line int) string {
-	return fmt.Sprintf("%s\x00%s\x00%s\x00%d", tool, ruleID, path, line)
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%d", strings.ToLower(tool), ruleID, path, line)
 }
 
 func (c Client) listOpenAlerts(ctx context.Context) ([]alert, error) {

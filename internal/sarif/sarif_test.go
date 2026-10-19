@@ -2,9 +2,44 @@ package sarif
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestUploadToolNamesTheImageCategory(t *testing.T) {
+	image := Run{Tool: Tool{Driver: Driver{Name: "trivy"}}, AutomationDetails: &AutomationDetails{ID: ImageCategory}}
+	if got := image.UploadTool(); got != ImageTool {
+		t.Errorf("image run uploads as %q, want %q", got, ImageTool)
+	}
+	other := Run{Tool: Tool{Driver: Driver{Name: "trivy"}}, AutomationDetails: &AutomationDetails{ID: "other/"}}
+	for _, run := range []Run{{Tool: Tool{Driver: Driver{Name: "trivy"}}}, other} {
+		if got := run.UploadTool(); got != "trivy" {
+			t.Errorf("run in %+v uploads as %q, want trivy", run.AutomationDetails, got)
+		}
+	}
+}
+
+func TestLoadMapsTheImageToolBackToTrivy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "in.sarif")
+	in := `{"$schema":"x","version":"2.1.0","runs":[` +
+		`{"tool":{"driver":{"name":"trivy-image"}},"results":[],"automationDetails":{"id":"images/"}},` +
+		`{"tool":{"driver":{"name":"trivy-license"}},"results":[]}]}`
+	if err := os.WriteFile(path, []byte(in), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rep.Runs[0].Tool.Driver.Name; got != "trivy" {
+		t.Errorf("image run driver = %q, want trivy", got)
+	}
+	if got := rep.Runs[1].Tool.Driver.Name; got != "trivy-license" {
+		t.Errorf("license run driver = %q, want it unchanged", got)
+	}
+}
 
 func TestNormalizeRendersEmptyResultsArray(t *testing.T) {
 	// A run with nil Results must marshal as [] not null (SARIF schema requires

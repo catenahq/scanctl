@@ -15,9 +15,9 @@ import (
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
-// ThirdPartyImages is the tool and category the third-party image scans are
-// written under; the repo's own images join trivy's fs scan in the default
-// one.
+// ThirdPartyImages is the in-memory tool and category of the third-party image
+// scans; the written report names that run sarif.ImageTool. The repo's own
+// images join trivy's fs scan in the default category.
 var (
 	ThirdPartyImages = sarif.Category{Tool: "trivy", ID: sarif.ImageCategory}
 	ownImages        = sarif.Category{Tool: "trivy"}
@@ -28,7 +28,8 @@ var (
 // reusing the pinned trivy binary fetched for the fs scan. It is skipped when
 // none is configured (only repos that ship, build or pin images set them).
 // Findings are tagged driver "trivy" so they gate under trivy's mode, while
-// the step is recorded as "trivy-image" in out.Ran for visibility. Each
+// the step is recorded as "trivy-image" in out.Ran for visibility; the written
+// report uploads the third-party runs as tool sarif.ImageTool. Each
 // finding records its image under ImageProperty, or OwnImageProperty for an
 // image the repo builds. A ref whose scan fails is retried once (registry
 // pulls fail transiently), then recorded in out.Failed, and its category in
@@ -138,9 +139,9 @@ func scanImage(ctx context.Context, bin, ignore, ref, prop string, out *Outcome)
 // trivy's location is a path inside the image, which neither names the image
 // nor stays put across a bump (a jar is named for its version), so this
 // property is what matches a finding to the same image on both sides of a
-// diff. A third-party image's runs go in sarif.ImageCategory, a clean one's
-// too, so a run that scanned every image closes each image alert its scans do
-// not report.
+// diff. A third-party image's runs go in sarif.ImageCategory (uploaded as tool
+// sarif.ImageTool), a clean one's too, so a run that scanned every image
+// closes each image alert its scans do not report.
 //
 // Every rule id, on the rules and the results alike, gains "/" and the
 // image's repository: code scanning reads a finding's security-severity from

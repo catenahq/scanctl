@@ -190,6 +190,22 @@ const OwnImageProperty = "ownImage"
 // closing the alerts of the images it skipped.
 const ImageCategory = "images/"
 
+// ImageTool is the tool name a written report gives the runs in ImageCategory.
+// Code scanning compares a pull request's upload with its base tool by tool,
+// and a pull request's run leaves ImageCategory out, so under a tool of their
+// own the image findings leave trivy's comparison whole. In memory those runs
+// keep the driver "trivy".
+const ImageTool = "trivy-image"
+
+// UploadTool returns the tool name the run is uploaded under: ImageTool for a
+// run in ImageCategory, the driver name otherwise.
+func (r Run) UploadTool() string {
+	if r.AutomationDetails != nil && r.AutomationDetails.ID == ImageCategory {
+		return ImageTool
+	}
+	return r.Tool.Driver.Name
+}
+
 // vulnIdentity names a dependency vulnerability by advisory, package, and where
 // the package sits: the image repository for an image-scan finding, the
 // manifest or lockfile otherwise. The installed version is left out. An image or
@@ -329,7 +345,8 @@ func New() *Report {
 }
 
 // Load reads a SARIF document from path: an externally-produced SARIF (e.g.
-// CodeQL) to fold into the merge, or a committed baseline.
+// CodeQL) to fold into the merge, a committed baseline, or a written report.
+// A run named ImageTool takes the in-memory driver name "trivy".
 func Load(path string) (*Report, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- operator-provided SARIF path
 	if err != nil {
@@ -338,6 +355,11 @@ func Load(path string) (*Report, error) {
 	var rep Report
 	if err := json.Unmarshal(data, &rep); err != nil {
 		return nil, fmt.Errorf("sarif: parse %s: %w", path, err)
+	}
+	for i := range rep.Runs {
+		if rep.Runs[i].Tool.Driver.Name == ImageTool {
+			rep.Runs[i].Tool.Driver.Name = "trivy"
+		}
 	}
 	return &rep, nil
 }

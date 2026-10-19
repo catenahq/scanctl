@@ -213,6 +213,105 @@ func TestWriteSARIFLeavesOutTheDefaultCategoryOfAFailedOwnImage(t *testing.T) {
 	}
 }
 
+// writtenNames writes rep and returns the raw tool name of each written run,
+// before sarif.Load maps an image run back to trivy.
+func writtenNames(t *testing.T, rep *sarif.Report, leaveOut map[sarif.Category]bool) []string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "scanctl.sarif")
+	if err := WriteSARIF(rep, path, leaveOut); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- path is under our temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Runs []struct {
+			Tool struct {
+				Driver struct {
+					Name string `json:"name"`
+				} `json:"driver"`
+			} `json:"tool"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, run := range raw.Runs {
+		names = append(names, run.Tool.Driver.Name)
+	}
+	return names
+}
+
+// The third-party image run is uploaded as tool trivy-image, the fs run as
+// trivy, and the report keeps the in-memory driver name.
+func TestWriteSARIFNamesTheImageRunTrivyImage(t *testing.T) {
+	rep := scan(imageScan("redis:8.10.1", 1))
+	got := writtenNames(t, rep, nil)
+	if want := []string{"trivy", "gosec", "trivy-image"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("written tools = %v, want %v", got, want)
+	}
+	for _, run := range rep.Runs {
+		if run.Tool.Driver.Name == sarif.ImageTool {
+			t.Errorf("WriteSARIF renamed a run of the report: %+v", run.Tool)
+		}
+	}
+	if got := writtenNames(t, rep, map[sarif.Category]bool{imageRuns: true}); fmt.Sprint(got) != fmt.Sprint([]string{"trivy", "gosec"}) {
+		t.Errorf("written tools with the image category left out = %v, want trivy and gosec", got)
+	}
+}
+
+// A run over the cap keeps its most severe results (ties by position), in
+// their original order, and the rules they reference; the report keeps every
+// result.
+func TestWriteSARIFCutsARunToItsMostSevereResults(t *testing.T) {
+	run := sarif.Run{Tool: sarif.Tool{Driver: sarif.Driver{Name: "gosec", Rules: []sarif.Rule{{ID: "LOW"}, {ID: "HIGH"}}}}}
+	for i := 0; i < maxUploadResults; i++ {
+		run.Results = append(run.Results, sarif.Result{RuleID: "LOW", Level: sarif.LevelNote, Message: sarif.Message{Text: fmt.Sprint("low", i)}})
+	}
+	for i := 0; i < 3; i++ {
+		run.Results = append(run.Results, sarif.Result{RuleID: "HIGH", Level: sarif.LevelError, Message: sarif.Message{Text: fmt.Sprint("high", i)}})
+	}
+	rep := &sarif.Report{Schema: "s", Version: "2.1.0", Runs: []sarif.Run{run}}
+
+	out := uploaded(t, rep, nil)
+	if len(out.Runs) != 1 || len(out.Runs[0].Results) != maxUploadResults {
+		t.Fatalf("written results = %d, want %d", out.ResultCount(), maxUploadResults)
+	}
+	got := out.Runs[0].Results
+	n := len(got)
+	for i, want := range []string{"high0", "high1", "high2"} {
+		if got[n-3+i].Message.Text != want {
+			t.Errorf("result %d = %q, want %q: every high result is kept", n-3+i, got[n-3+i].Message.Text, want)
+		}
+	}
+	if got[0].Message.Text != "low0" || got[n-4].Message.Text != "low4996" {
+		t.Errorf("the 4997 first low results are kept in order: %q ... %q", got[0].Message.Text, got[n-4].Message.Text)
+	}
+	if rules := out.Runs[0].Tool.Driver.Rules; len(rules) != 2 {
+		t.Errorf("rules = %v, want both: each is still referenced", rules)
+	}
+	if rep.ResultCount() != maxUploadResults+3 || len(rep.Runs[0].Tool.Driver.Rules) != 2 {
+		t.Errorf("WriteSARIF cut the report: %d results", rep.ResultCount())
+	}
+}
+
+func TestWriteSARIFDropsTheRulesOfCutResults(t *testing.T) {
+	run := sarif.Run{Tool: sarif.Tool{Driver: sarif.Driver{Name: "gosec", Rules: []sarif.Rule{{ID: "LOW"}, {ID: "HIGH"}}}}}
+	for i := 0; i < maxUploadResults; i++ {
+		run.Results = append(run.Results, sarif.Result{RuleID: "HIGH", Level: sarif.LevelError, Message: sarif.Message{Text: "h"}})
+	}
+	run.Results = append(run.Results, sarif.Result{RuleID: "LOW", Level: sarif.LevelNote, Message: sarif.Message{Text: "l"}})
+	out := uploaded(t, &sarif.Report{Runs: []sarif.Run{run}}, nil)
+	if got := out.Runs[0].Tool.Driver.Rules; len(got) != 1 || got[0].ID != "HIGH" {
+		t.Errorf("rules = %v, want HIGH alone", got)
+	}
+	if n := len(out.Runs[0].Results); n != maxUploadResults {
+		t.Errorf("written results = %d, want %d", n, maxUploadResults)
+	}
+}
+
 func TestSummaryEmpty(t *testing.T) {
 	s := Summary(sarif.New(), config.Default())
 	if !strings.Contains(s, "0 finding") {

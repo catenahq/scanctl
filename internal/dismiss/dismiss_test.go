@@ -82,6 +82,40 @@ func TestDismissMatchesAndSkipsUnsuppressed(t *testing.T) {
 	}
 }
 
+// The alerts API names the tool "Trivy" for an upload named "trivy", and an
+// image run is uploaded as "trivy-image".
+func TestDismissMatchesToolNamesInAnyCaseAndByUploadName(t *testing.T) {
+	var dismissed []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			fmt.Fprint(w, `[
+				{"number": 1, "rule": {"id": "CVE-1"}, "tool": {"name": "Trivy"}, "most_recent_instance": {"location": {"path": "go.mod", "start_line": 3}}},
+				{"number": 2, "rule": {"id": "CVE-2/redis"}, "tool": {"name": "trivy-image"}, "most_recent_instance": {"location": {"path": "usr/bin/x", "start_line": 1}}},
+				{"number": 3, "rule": {"id": "CVE-2/redis"}, "tool": {"name": "Trivy"}, "most_recent_instance": {"location": {"path": "usr/bin/x", "start_line": 1}}}
+			]`)
+			return
+		}
+		var n int
+		fmt.Sscanf(r.URL.Path, "/repos/o/r/code-scanning/alerts/%d", &n)
+		dismissed = append(dismissed, n)
+	}))
+	defer srv.Close()
+
+	rep := report("trivy", result("trivy", "CVE-1", "go.mod", 3, true))
+	image := report("trivy", result("trivy", "CVE-2/redis", "usr/bin/x", 1, true))
+	image.Runs[0].AutomationDetails = &sarif.AutomationDetails{ID: sarif.ImageCategory}
+	rep.Merge(image)
+
+	c := Client{BaseURL: srv.URL, Owner: "o", Repo: "r", Token: "secret", HTTPClient: srv.Client()}
+	n, err := c.Dismiss(context.Background(), rep)
+	if err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+	if n != 2 || len(dismissed) != 2 || dismissed[0] != 1 || dismissed[1] != 2 {
+		t.Errorf("dismissed %d alerts %v, want [1 2]: the image finding matches the trivy-image alert only", n, dismissed)
+	}
+}
+
 func TestDismissNoOpWhenNothingSuppressed(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
