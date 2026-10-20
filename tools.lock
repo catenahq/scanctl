@@ -11,7 +11,7 @@ tools:
   osv-scanner:
     repo: google/osv-scanner
     # renovate: datasource=github-releases depName=google/osv-scanner
-    version: 2.6.0
+    version: 2.7.0
   gitleaks:
     repo: gitleaks/gitleaks
     # renovate: datasource=github-releases depName=gitleaks/gitleaks
@@ -27,7 +27,7 @@ tools:
   syft:
     repo: anchore/syft
     # renovate: datasource=github-releases depName=anchore/syft
-    version: 1.54.0
+    version: 1.54.1
   semgrep:
     # renovate: datasource=pypi depName=semgrep
     version: 1.180.0
