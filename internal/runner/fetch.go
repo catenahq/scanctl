@@ -75,19 +75,26 @@ func releaseAsset(ctx context.Context, repo, tag, name string) (asset, error) {
 		return asset{}, fmt.Errorf("%s: tools.lock pins no repo", name)
 	}
 	endpoint := githubAPI + "/repos/" + repo + "/releases/tags/" + url.PathEscape(tag)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	tok := githubToken()
+	resp, err := releaseRequest(ctx, endpoint, tok)
 	if err != nil {
 		return asset{}, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	if tok := githubToken(); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return asset{}, fmt.Errorf("GET %s: %w", endpoint, err)
+	// An organization with an IP allow list refuses a GitHub App installation
+	// token, a job's GITHUB_TOKEN among them, even on its public repositories
+	// (aquasecurity does); the same request with no token is answered.
+	anonymous := false
+	if resp.StatusCode == http.StatusForbidden && tok != "" && resp.Header.Get("X-RateLimit-Remaining") != "0" {
+		resp.Body.Close()
+		anonymous = true
+		if resp, err = releaseRequest(ctx, endpoint, ""); err != nil {
+			return asset{}, err
+		}
 	}
 	defer resp.Body.Close()
+	if anonymous && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) {
+		return asset{}, fmt.Errorf("GET %s: status %d with the token and without it: the owner refuses the token and the API's limit for requests without one is spent", endpoint, resp.StatusCode)
+	}
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
 		return asset{}, fmt.Errorf("GET %s: status %d, the GitHub API rate limit: set GH_TOKEN (or GITHUB_TOKEN) to lift it", endpoint, resp.StatusCode)
 	}
@@ -115,6 +122,23 @@ func releaseAsset(ctx context.Context, repo, tag, name string) (asset, error) {
 		return asset{url: a.URL, sha256: m[1]}, nil
 	}
 	return asset{}, fmt.Errorf("%s %s: no release file %s", repo, tag, name)
+}
+
+// releaseRequest sends one GET of the releases API, with tok when it is set.
+func releaseRequest(ctx context.Context, endpoint, tok string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", endpoint, err)
+	}
+	return resp, nil
 }
 
 // download streams src into a new temporary file in dir (created if needed)

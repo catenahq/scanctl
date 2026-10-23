@@ -30,7 +30,9 @@ binary) and bumped by Renovate. Release-binary tools (trivy, osv-scanner,
 gitleaks, gosec, zizmor, and syft for the SBOM) are lazy-fetched and cached (set
 `SCANCTL_CACHE` to relocate). Once per run and tool, the file is checked against the
 sha256 digest GitHub publishes for it in the release (`api.github.com`; set
-`GH_TOKEN` or `GITHUB_TOKEN` to lift its rate limit): a file that differs is
+`GH_TOKEN` or `GITHUB_TOKEN` to lift its rate limit; a release whose owner
+refuses the token, as an organization IP allow list does with a job's token, is
+read without it): a file that differs is
 downloaded again, and a second mismatch, a release file with no digest or an
 unreachable API is a fetch failure, so the scanner counts as one that did not
 run. govulncheck is `go install`ed with the toolchain the scanned module

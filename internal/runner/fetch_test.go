@@ -291,6 +291,40 @@ func TestAFailedCheckIsNotRemembered(t *testing.T) {
 	}
 }
 
+// aquasecurity's IP allow list answers a job's token with 403; the release is
+// then read with no token. A spent rate limit is never retried without one.
+func TestATokenTheOwnerRefusesIsDroppedButASpentLimitIsNot(t *testing.T) {
+	release := `{"assets":[{"name":"scan","browser_download_url":"https://example.invalid/scan","digest":"` + digestOf("binary") + `"}]}`
+	for _, c := range []struct {
+		remaining string
+		wantCalls int
+		wantOK    bool
+	}{{"4999", 2, true}, {"0", 1, false}} {
+		var calls []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls = append(calls, r.Header.Get("Authorization"))
+			if r.Header.Get("Authorization") != "" {
+				w.Header().Set("X-RateLimit-Remaining", c.remaining)
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_, _ = io.WriteString(w, release)
+		}))
+		saved := githubAPI
+		githubAPI = srv.URL
+		t.Setenv("GH_TOKEN", "job-token")
+		a, err := releaseAsset(context.Background(), "aquasecurity/trivy", "v1.0.0", "scan")
+		githubAPI = saved
+		srv.Close()
+		if (err == nil) != c.wantOK || len(calls) != c.wantCalls {
+			t.Errorf("remaining %s: err = %v, calls %q; want ok=%v after %d call(s)", c.remaining, err, calls, c.wantOK, c.wantCalls)
+		}
+		if c.wantOK && (calls[1] != "" || a.sha256 == "") {
+			t.Errorf("remaining %s: second call Authorization %q, asset %+v; want an anonymous call that finds the asset", c.remaining, calls[1], a)
+		}
+	}
+}
+
 func TestAnExhaustedRateLimitSaysHowToLiftIt(t *testing.T) {
 	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
