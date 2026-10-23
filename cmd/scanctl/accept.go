@@ -21,7 +21,7 @@ const acceptDateLayout = "2006-01-02"
 // (a fixed version, at or above the floor, from a block-mode tool) in the
 // committed baseline, each accepted until the -until date. An image entry that
 // is live keeps its date, an expired one takes -until, a finding with no entry
-// gets one, and an entry the input no longer reports is dropped when the input
+// gets one, and an entry for a finding the input does not report is dropped when the input
 // holds a run that scanned every image. Entries for the repo's own tree are left
 // as they are.
 func acceptCmd(args []string) int {
