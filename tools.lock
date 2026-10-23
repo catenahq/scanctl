@@ -47,9 +47,9 @@ tools:
   zizmor:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
-    version: 1.31.0
+    version: 1.31.1
     sha256:
-      v1.31.0/zizmor-x86_64-unknown-linux-gnu.tar.gz: 95776c59c2d4c0d6e10560647b4830762b8dbcca8d7d9b7469ff227c73a6fee6
+      v1.31.1/zizmor-x86_64-unknown-linux-gnu.tar.gz: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
   guarddog:
     # renovate: datasource=pypi depName=guarddog
     version: 3.2.0
