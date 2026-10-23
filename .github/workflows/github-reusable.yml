@@ -19,6 +19,7 @@ name: scanctl
 #         scanctl-version: v0.1.0
 #         # baseline: .scanctl/baseline.sarif   # default; accepted findings, may expire
 #         # pre-scan: docker buildx build -t app:ci .   # optional: build an own image
+#         #   (the build may pass --cache-from and --cache-to type=gha,version=2)
 #         # own-images: app:ci                           # gated on every run
 #       # secrets:                 # optional: Docker Hub pulls, logged in
 #       #   DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -141,6 +142,12 @@ jobs:
         env:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+      - name: Expose GitHub's cache to the pre-scan
+        # A docker buildx build in the pre-scan reads and writes build cache
+        # with type=gha; a run: step gets the cache service only through this.
+        # The scan step blanks the token again.
+        if: inputs.pre-scan != ''
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - name: Pre-scan
         if: inputs.pre-scan != ''
         env:
@@ -150,6 +157,9 @@ jobs:
         env:
           # zizmor's API-backed audits use this when present; absent = it runs --offline.
           GH_TOKEN: ${{ github.token }}
+          # No scanner gets GitHub's cache token.
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
           # Inputs routed through env vars, not interpolated into the run: script
           # (zizmor template-injection: untrusted-context-into-shell sink).
           NO_GATE: ${{ inputs.no-gate }}
@@ -177,9 +187,10 @@ jobs:
             --summary scanctl-summary.md "$SCAN_PATH"
           cat scanctl-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload SARIF to code scanning
-        # A private repo without code scanning refuses the upload; the
-        # artifact and the PR comment below carry the findings there.
-        if: always()
+        # A private repo without code scanning refuses the upload, so a
+        # private repo skips it; the artifact and the PR comment below carry
+        # the findings there. An event without a repository object uploads.
+        if: always() && github.event.repository.private != true
         uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463 # v4
         with:
           sarif_file: scanctl.sarif
