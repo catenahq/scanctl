@@ -272,33 +272,39 @@ func zizmorArch() string {
 
 // ghBinary returns an ensure func for a plain (non-archive) release binary:
 // the release file assetFn names, checked against its published digest (see
-// releaseFile) and made executable.
+// releaseFile) and made executable. The check runs once per tool version per
+// process.
 func ghBinary(tool string, assetFn func(version string) string) func(context.Context, LockEntry, string) (string, error) {
 	return func(ctx context.Context, e LockEntry, _ string) (string, error) {
-		bin, err := releaseFile(ctx, tool, e, assetFn(e.Version))
-		if err != nil {
-			return "", err
-		}
-		if err := os.Chmod(bin, 0o755); err != nil { // #nosec G302 -- a scanner binary must be executable
-			return "", err
-		}
-		return bin, nil
+		return checkedOnce(tool, e, func() (string, error) {
+			bin, err := releaseFile(ctx, tool, e, assetFn(e.Version))
+			if err != nil {
+				return "", err
+			}
+			if err := os.Chmod(bin, 0o755); err != nil { // #nosec G302 -- a scanner binary must be executable
+				return "", err
+			}
+			return bin, nil
+		})
 	}
 }
 
 // ghTarGz returns an ensure func for a .tar.gz release asset: the release file
 // assetFn names, checked against its published digest (see releaseFile), with
-// binInArchive extracted from it afresh on every call.
+// binInArchive extracted from it afresh. The check and extraction run once per
+// tool version per process.
 func ghTarGz(tool string, assetFn func(version string) string, binInArchive string) func(context.Context, LockEntry, string) (string, error) {
 	return func(ctx context.Context, e LockEntry, _ string) (string, error) {
-		archive, err := releaseFile(ctx, tool, e, assetFn(e.Version))
-		if err != nil {
-			return "", err
-		}
-		dest := filepath.Join(filepath.Dir(archive), tool)
-		if err := extractTarGz(archive, binInArchive, dest); err != nil {
-			return "", err
-		}
-		return dest, nil
+		return checkedOnce(tool, e, func() (string, error) {
+			archive, err := releaseFile(ctx, tool, e, assetFn(e.Version))
+			if err != nil {
+				return "", err
+			}
+			dest := filepath.Join(filepath.Dir(archive), tool)
+			if err := extractTarGz(archive, binInArchive, dest); err != nil {
+				return "", err
+			}
+			return dest, nil
+		})
 	}
 }

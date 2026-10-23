@@ -88,6 +88,8 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      # The job holds no id-token: write: the runner would then hand every
+      # step, scanners included, a token that reaches GitHub's cache.
       # PR-level finding comment for private repos (no Advanced Security). Only
       # exercised on pull_request events; harmless on push.
       pull-requests: write
@@ -157,9 +159,9 @@ jobs:
         env:
           # zizmor's API-backed audits use this when present; absent = it runs --offline.
           GH_TOKEN: ${{ github.token }}
-          # No scanner gets GitHub's cache token.
+          # Blanks the cache token the pre-scan step exposed, so no scanner
+          # receives it from the environment.
           ACTIONS_RUNTIME_TOKEN: ""
-          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
           # Inputs routed through env vars, not interpolated into the run: script
           # (zizmor template-injection: untrusted-context-into-shell sink).
           NO_GATE: ${{ inputs.no-gate }}
@@ -196,8 +198,8 @@ jobs:
           sarif_file: scanctl.sarif
         continue-on-error: true
       - name: Upload SARIF + SBOM artifacts
-        # Downloadable findings + SBOM even on private repos without Advanced
-        # Security (where the code-scanning upload above is a no-op).
+        # Downloadable findings + SBOM on every repo, including private repos,
+        # which skip the code-scanning upload above.
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

@@ -1,4 +1,5 @@
-# Pinned scanner versions. The runner reads `version`; Renovate bumps each line
+# Pinned scanner versions. The runner reads `version`, and `repo` to find the
+# release whose published digest checks each downloaded file; Renovate bumps each line
 # via the customManager in renovate.json. Asset naming + download logic live in
 # internal/runner (typed Go), so this file stays a flat version pin that both
 # the runner and Renovate can read. Do not hand-edit versions -- let Renovate PR

@@ -144,9 +144,21 @@ func TestAFileThatNeverMatchesIsAnErrorAndIsDeleted(t *testing.T) {
 	if fr.downloads != 2 {
 		t.Errorf("downloads = %d, want 2", fr.downloads)
 	}
-	if _, err := os.Stat(filepath.Join(cacheRoot(), "scan-1.0.0", "scan")); err == nil {
-		t.Error("the mismatching file was left in the cache")
+	requireOnlyFiles(t, filepath.Join(cacheRoot(), "scan-1.0.0"))
+}
+
+// A failed check never touches the destination: the doctored download is
+// removed from its temporary name, and the file already there is the one that
+// failed its own check.
+func TestAFailedDownloadLeavesNoPartialFileAtTheDestination(t *testing.T) {
+	serveRelease(t, map[string]string{"scan": "doctored"}, map[string]string{"scan": digestOf("binary")})
+	dir := filepath.Join(cacheRoot(), "scan-1.0.0")
+	writeFile(t, dir, "scan", "swapped")
+
+	if _, err := releaseFile(context.Background(), "scan", releaseEntry, "scan"); err == nil {
+		t.Fatal("a file that does not match its digest was accepted")
 	}
+	requireOnlyFiles(t, dir)
 }
 
 func TestAFileWithoutADigestIsAnError(t *testing.T) {
@@ -195,19 +207,17 @@ func TestTheAPICallCarriesTheTokenWhenOneIsSet(t *testing.T) {
 	}
 }
 
-// The binary inside a verified archive is extracted afresh on every call, so a
-// swapped extracted binary never runs.
+// The binary inside a verified archive is extracted afresh over whatever sits
+// at its path, through a temporary file that is renamed into place.
 func TestAnArchiveBinaryIsExtractedAfreshAfterTheCheck(t *testing.T) {
 	archive := tarGz(t, "scan", "real binary")
 	serveRelease(t, map[string]string{"scan.tar.gz": archive}, map[string]string{"scan.tar.gz": digestOf(archive)})
+	swapped := filepath.Join(cacheRoot(), "scan-1.0.0", "scan")
+	writeFile(t, filepath.Dir(swapped), "scan", "swapped binary")
 	ensure := ghTarGz("scan", func(string) string { return "scan.tar.gz" }, "scan")
 
 	bin, err := ensure(context.Background(), releaseEntry, "")
 	if err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Dir(bin), "scan", "swapped binary")
-	if bin, err = ensure(context.Background(), releaseEntry, ""); err != nil {
 		t.Fatal(err)
 	}
 	body, err := os.ReadFile(bin) // #nosec G304 -- path is under the test's temp dir
@@ -216,6 +226,84 @@ func TestAnArchiveBinaryIsExtractedAfreshAfterTheCheck(t *testing.T) {
 	}
 	if string(body) != "real binary" {
 		t.Errorf("binary = %q, want the archive's", body)
+	}
+	requireOnlyFiles(t, filepath.Dir(bin), "scan", "scan.tar.gz")
+}
+
+// requireOnlyFiles fails when dir holds anything but the named files: a
+// temporary file left behind would show here.
+func requireOnlyFiles(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	slices.Sort(got)
+	slices.Sort(names)
+	if !slices.Equal(got, names) {
+		t.Errorf("%s holds %v, want %v", dir, got, names)
+	}
+}
+
+// One API call, one hash and one extraction per tool per process: a later call
+// reuses the checked path.
+func TestAToolIsCheckedOncePerProcess(t *testing.T) {
+	archive := tarGz(t, "scan", "real binary")
+	fr := serveRelease(t, map[string]string{"scan.tar.gz": archive}, map[string]string{"scan.tar.gz": digestOf(archive)})
+	ensure := ghTarGz("scan", func(string) string { return "scan.tar.gz" }, "scan")
+
+	first, err := ensure(context.Background(), releaseEntry, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second call would hash and extract again; it would put the archive's
+	// bytes back over this.
+	writeFile(t, filepath.Dir(first), "scan", "changed after the check")
+	second, err := ensure(context.Background(), releaseEntry, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(second) // #nosec G304 -- path is under the test's temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != first || fr.apiCalls != 1 || fr.downloads != 1 || string(body) != "changed after the check" {
+		t.Errorf("second call: path %q (first %q), %d API call(s), %d download(s), file %q; want the reused path after one call and one download",
+			second, first, fr.apiCalls, fr.downloads, body)
+	}
+}
+
+func TestAFailedCheckIsNotRemembered(t *testing.T) {
+	fr := serveRelease(t, map[string]string{"scan_linux": "doctored"}, map[string]string{"scan_linux": digestOf("binary")})
+	ensure := ghBinary("scan", func(string) string { return "scan_linux" })
+
+	for i := 0; i < 2; i++ {
+		if _, err := ensure(context.Background(), releaseEntry, ""); err == nil {
+			t.Fatal("a doctored file was accepted")
+		}
+	}
+	if fr.apiCalls != 2 {
+		t.Errorf("API calls = %d, want the failure tried again", fr.apiCalls)
+	}
+}
+
+func TestAnExhaustedRateLimitSaysHowToLiftIt(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+		}))
+		saved := githubAPI
+		githubAPI = srv.URL
+		_, err := releaseAsset(context.Background(), "o/r", "v1.0.0", "scan")
+		githubAPI = saved
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), "rate limit") || !strings.Contains(err.Error(), "GH_TOKEN") {
+			t.Errorf("status %d: error = %v, want it to name the rate limit and GH_TOKEN", status, err)
+		}
 	}
 }
 

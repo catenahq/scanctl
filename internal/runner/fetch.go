@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // pyToolPython is the interpreter uv installs Python-based tools under. Pinned
@@ -87,6 +88,9 @@ func releaseAsset(ctx context.Context, repo, tag, name string) (asset, error) {
 		return asset{}, fmt.Errorf("GET %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		return asset{}, fmt.Errorf("GET %s: status %d, the GitHub API rate limit: set GH_TOKEN (or GITHUB_TOKEN) to lift it", endpoint, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return asset{}, fmt.Errorf("GET %s: status %d", endpoint, resp.StatusCode)
 	}
@@ -113,27 +117,28 @@ func releaseAsset(ctx context.Context, repo, tag, name string) (asset, error) {
 	return asset{}, fmt.Errorf("%s %s: no release file %s", repo, tag, name)
 }
 
-// download streams src to dest, creating parent dirs, and returns the sha256 of
-// the bytes written. Fails on non-200; a failed download leaves no file.
-func download(ctx context.Context, src, dest string) (string, error) {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
-		return "", err
+// download streams src into a new temporary file in dir (created if needed)
+// and returns its path and the sha256 of the bytes written. Fails on non-200;
+// a failed download leaves no file. The caller renames or removes the file.
+func download(ctx context.Context, src, dir string) (string, string, error) {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("GET %s: %w", src, err)
+		return "", "", fmt.Errorf("GET %s: %w", src, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s: status %d", src, resp.StatusCode)
+		return "", "", fmt.Errorf("GET %s: status %d", src, resp.StatusCode)
 	}
-	f, err := os.Create(dest) // #nosec G304 -- dest is under our own cache root, not user-controlled
+	f, err := os.CreateTemp(dir, ".download-*")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	h := sha256.New()
 	_, err = io.Copy(io.MultiWriter(f, h), resp.Body)
@@ -141,10 +146,10 @@ func download(ctx context.Context, src, dest string) (string, error) {
 		err = cerr
 	}
 	if err != nil {
-		_ = os.Remove(dest)
-		return "", err
+		_ = os.Remove(f.Name())
+		return "", "", err
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return f.Name(), hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // fileSHA256 returns the hex sha256 of the file at p.
@@ -164,8 +169,9 @@ func fileSHA256(p string) (string, error) {
 // releaseFile returns the path of the release file name of tool's pinned
 // release, kept at <cache>/<tool>-<version>/<name>. The file is hashed on every
 // call and must match the digest GitHub publishes for it. A file that is absent
-// or does not match is downloaded afresh; a second mismatch is an error and
-// leaves no file.
+// or does not match is downloaded afresh into a temporary file, which replaces
+// it by rename once its hash matches, so a running scanner never sees a partial
+// file. A second mismatch is an error and leaves no file at the destination.
 func releaseFile(ctx context.Context, tool string, e LockEntry, name string) (string, error) {
 	a, err := releaseAsset(ctx, e.Repo, "v"+e.Version, name)
 	if err != nil {
@@ -173,21 +179,53 @@ func releaseFile(ctx context.Context, tool string, e LockEntry, name string) (st
 	}
 	dest := filepath.Join(cacheRoot(), tool+"-"+e.Version, name)
 	got := ""
-	for attempt := 0; attempt < 2; attempt++ {
-		sum, err := fileSHA256(dest)
-		if err != nil {
-			_ = os.Remove(dest)
-			if sum, err = download(ctx, a.url, dest); err != nil {
-				return "", err
-			}
-		}
+	downloads := 2
+	if sum, err := fileSHA256(dest); err == nil {
 		if sum == a.sha256 {
 			return dest, nil
 		}
 		got = sum
 		_ = os.Remove(dest)
+		downloads = 1
+	}
+	for i := 0; i < downloads; i++ {
+		tmp, sum, err := download(ctx, a.url, filepath.Dir(dest))
+		if err != nil {
+			return "", err
+		}
+		if sum == a.sha256 {
+			if err := os.Rename(tmp, dest); err != nil {
+				_ = os.Remove(tmp)
+				return "", err
+			}
+			return dest, nil
+		}
+		_ = os.Remove(tmp)
+		got = sum
 	}
 	return "", fmt.Errorf("%s %s: sha256 is %s, GitHub publishes %s", e.Repo, name, got, a.sha256)
+}
+
+// checkedOnce remembers, for the life of the process, the path ensure returned
+// for a tool version, so the release API is called and the file hashed once per
+// tool per run. Only a success is remembered.
+var (
+	checkedMu   sync.Mutex
+	checkedPath = map[string]string{}
+)
+
+func checkedOnce(tool string, e LockEntry, ensure func() (string, error)) (string, error) {
+	key := cacheRoot() + "\x00" + tool + "\x00" + e.Version
+	checkedMu.Lock()
+	defer checkedMu.Unlock()
+	if p, ok := checkedPath[key]; ok {
+		return p, nil
+	}
+	p, err := ensure()
+	if err == nil {
+		checkedPath[key] = p
+	}
+	return p, err
 }
 
 // extractTarGz writes the single entry of the archive at archivePath named
@@ -218,24 +256,31 @@ func extractTarGz(archivePath, binInArchive, destBin string) error {
 		if err := os.MkdirAll(filepath.Dir(destBin), 0o750); err != nil {
 			return err
 		}
-		out, err := os.Create(destBin) // #nosec G304 -- destBin is under our own cache root
+		// Written beside destBin and renamed over it, so a scanner running
+		// the old file keeps it and never sees a partial one.
+		out, err := os.CreateTemp(filepath.Dir(destBin), ".extract-*")
 		if err != nil {
 			return err
 		}
+		tmp := out.Name()
 		// Bound the copy so a crafted archive cannot exhaust disk.
 		n, err := io.Copy(out, io.LimitReader(tr, maxArtifactBytes+1))
+		if cerr := out.Close(); err == nil {
+			err = cerr
+		}
+		if err == nil && n > maxArtifactBytes {
+			err = fmt.Errorf("%s: %q exceeds %d bytes", archivePath, binInArchive, maxArtifactBytes)
+		}
+		if err == nil {
+			err = os.Chmod(tmp, 0o755) // #nosec G302 -- a scanner binary must be executable
+		}
+		if err == nil {
+			err = os.Rename(tmp, destBin)
+		}
 		if err != nil {
-			_ = out.Close()
-			return err
+			_ = os.Remove(tmp)
 		}
-		if n > maxArtifactBytes {
-			_ = out.Close()
-			return fmt.Errorf("%s: %q exceeds %d bytes", archivePath, binInArchive, maxArtifactBytes)
-		}
-		if err := out.Close(); err != nil {
-			return err
-		}
-		return os.Chmod(destBin, 0o755) // #nosec G302 -- a scanner binary must be executable
+		return err
 	}
 }
 
