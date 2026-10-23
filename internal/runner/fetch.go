@@ -6,11 +6,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -29,15 +27,11 @@ const pyToolPython = "3.13"
 // ~150MB) while still capping a malicious archive.
 const maxArtifactBytes = 1 << 30 // 1 GiB
 
-// githubAPI is the base URL of the GitHub REST API, which publishes the sha256
-// of every release file.
-var githubAPI = "https://api.github.com"
+// githubDownload is the base URL release files are downloaded from.
+var githubDownload = "https://github.com"
 
-// maxReleaseDocBytes bounds the release document read from the API.
-const maxReleaseDocBytes = 16 << 20
-
-// digestRx is a release file's digest as the API spells it.
-var digestRx = regexp.MustCompile(`^sha256:([0-9a-f]{64})$`)
+// sha256Rx is a digest as tools.lock spells it.
+var sha256Rx = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // cacheRoot is where fetched scanner binaries and the govulncheck installs land,
 // reused across runs (on a persistent runner this means one download per pin).
@@ -52,93 +46,37 @@ func cacheRoot() string {
 	return filepath.Join(base, "scanctl", "tools")
 }
 
-// asset is a release file as the GitHub API describes it: where to download it
-// and the sha256 GitHub holds for it.
-type asset struct {
-	url, sha256 string
+// digestKey is the key of a release file in a tools.lock sha256 map: its path
+// under releases/download/.
+func digestKey(version, name string) string {
+	return "v" + version + "/" + name
 }
 
-// githubToken is the token the API call carries: GH_TOKEN, else GITHUB_TOKEN.
-// It lifts the API's rate limit and goes to no other host.
-func githubToken() string {
-	if t := os.Getenv("GH_TOKEN"); t != "" {
-		return t
-	}
-	return os.Getenv("GITHUB_TOKEN")
+// releaseURL is where the release file with the given digestKey is downloaded.
+func releaseURL(repo, key string) string {
+	return githubDownload + "/" + repo + "/releases/download/" + key
 }
 
-// releaseAsset reads the release tag of repo from the GitHub API and returns
-// the file called name. A file with no digest is an error: nothing could check
-// it.
-func releaseAsset(ctx context.Context, repo, tag, name string) (asset, error) {
-	if repo == "" {
-		return asset{}, fmt.Errorf("%s: tools.lock pins no repo", name)
-	}
-	endpoint := githubAPI + "/repos/" + repo + "/releases/tags/" + url.PathEscape(tag)
-	tok := githubToken()
-	resp, err := releaseRequest(ctx, endpoint, tok)
+// fetchHashed GETs src, writes the body to w and returns its sha256. It fails on
+// a non-200 status. No credential goes with the request.
+func fetchHashed(ctx context.Context, src string, w io.Writer) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
 	if err != nil {
-		return asset{}, err
-	}
-	// An organization with an IP allow list refuses a GitHub App installation
-	// token, a job's GITHUB_TOKEN among them, even on its public repositories
-	// (aquasecurity does); the same request with no token is answered.
-	anonymous := false
-	if resp.StatusCode == http.StatusForbidden && tok != "" && resp.Header.Get("X-RateLimit-Remaining") != "0" {
-		resp.Body.Close()
-		anonymous = true
-		if resp, err = releaseRequest(ctx, endpoint, ""); err != nil {
-			return asset{}, err
-		}
-	}
-	defer resp.Body.Close()
-	if anonymous && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) {
-		return asset{}, fmt.Errorf("GET %s: status %d with the token and without it: the owner refuses the token and the API's limit for requests without one is spent", endpoint, resp.StatusCode)
-	}
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-		return asset{}, fmt.Errorf("GET %s: status %d, the GitHub API rate limit: set GH_TOKEN (or GITHUB_TOKEN) to lift it", endpoint, resp.StatusCode)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return asset{}, fmt.Errorf("GET %s: status %d", endpoint, resp.StatusCode)
-	}
-	var rel struct {
-		Assets []struct {
-			Name   string `json:"name"`
-			URL    string `json:"browser_download_url"`
-			Digest string `json:"digest"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxReleaseDocBytes)).Decode(&rel); err != nil {
-		return asset{}, fmt.Errorf("GET %s: %w", endpoint, err)
-	}
-	for _, a := range rel.Assets {
-		if a.Name != name {
-			continue
-		}
-		m := digestRx.FindStringSubmatch(a.Digest)
-		if m == nil {
-			return asset{}, fmt.Errorf("%s %s: GitHub publishes no sha256 digest for %s (got %q)", repo, tag, name, a.Digest)
-		}
-		return asset{url: a.URL, sha256: m[1]}, nil
-	}
-	return asset{}, fmt.Errorf("%s %s: no release file %s", repo, tag, name)
-}
-
-// releaseRequest sends one GET of the releases API, with tok when it is set.
-func releaseRequest(ctx context.Context, endpoint, tok string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	if tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
+		return "", err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", endpoint, err)
+		return "", fmt.Errorf("GET %s: %w", src, err)
 	}
-	return resp, nil
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET %s: status %d", src, resp.StatusCode)
+	}
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(w, h), resp.Body); err != nil {
+		return "", fmt.Errorf("GET %s: %w", src, err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // download streams src into a new temporary file in dir (created if needed)
@@ -148,24 +86,11 @@ func download(ctx context.Context, src, dir string) (string, string, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
-	if err != nil {
-		return "", "", err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("GET %s: %w", src, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("GET %s: status %d", src, resp.StatusCode)
-	}
 	f, err := os.CreateTemp(dir, ".download-*")
 	if err != nil {
 		return "", "", err
 	}
-	h := sha256.New()
-	_, err = io.Copy(io.MultiWriter(f, h), resp.Body)
+	sum, err := fetchHashed(ctx, src, f)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -173,7 +98,7 @@ func download(ctx context.Context, src, dir string) (string, string, error) {
 		_ = os.Remove(f.Name())
 		return "", "", err
 	}
-	return f.Name(), hex.EncodeToString(h.Sum(nil)), nil
+	return f.Name(), sum, nil
 }
 
 // fileSHA256 returns the hex sha256 of the file at p.
@@ -192,20 +117,24 @@ func fileSHA256(p string) (string, error) {
 
 // releaseFile returns the path of the release file name of tool's pinned
 // release, kept at <cache>/<tool>-<version>/<name>. The file is hashed on every
-// call and must match the digest GitHub publishes for it. A file that is absent
+// call and must match the sha256 tools.lock pins for it. A file that is absent
 // or does not match is downloaded afresh into a temporary file, which replaces
 // it by rename once its hash matches, so a running scanner never sees a partial
 // file. A second mismatch is an error and leaves no file at the destination.
 func releaseFile(ctx context.Context, tool string, e LockEntry, name string) (string, error) {
-	a, err := releaseAsset(ctx, e.Repo, "v"+e.Version, name)
-	if err != nil {
-		return "", err
+	if e.Repo == "" {
+		return "", fmt.Errorf("%s: tools.lock pins no repo", tool)
+	}
+	key := digestKey(e.Version, name)
+	want := e.SHA256[key]
+	if !sha256Rx.MatchString(want) {
+		return "", fmt.Errorf("%s: tools.lock pins no sha256 for %s; run scanctl refresh-digests", tool, key)
 	}
 	dest := filepath.Join(cacheRoot(), tool+"-"+e.Version, name)
 	got := ""
 	downloads := 2
 	if sum, err := fileSHA256(dest); err == nil {
-		if sum == a.sha256 {
+		if sum == want {
 			return dest, nil
 		}
 		got = sum
@@ -213,11 +142,11 @@ func releaseFile(ctx context.Context, tool string, e LockEntry, name string) (st
 		downloads = 1
 	}
 	for i := 0; i < downloads; i++ {
-		tmp, sum, err := download(ctx, a.url, filepath.Dir(dest))
+		tmp, sum, err := download(ctx, releaseURL(e.Repo, key), filepath.Dir(dest))
 		if err != nil {
 			return "", err
 		}
-		if sum == a.sha256 {
+		if sum == want {
 			if err := os.Rename(tmp, dest); err != nil {
 				_ = os.Remove(tmp)
 				return "", err
@@ -227,12 +156,12 @@ func releaseFile(ctx context.Context, tool string, e LockEntry, name string) (st
 		_ = os.Remove(tmp)
 		got = sum
 	}
-	return "", fmt.Errorf("%s %s: sha256 is %s, GitHub publishes %s", e.Repo, name, got, a.sha256)
+	return "", fmt.Errorf("%s %s: sha256 is %s, tools.lock pins %s", e.Repo, key, got, want)
 }
 
 // checkedOnce remembers, for the life of the process, the path ensure returned
-// for a tool version, so the release API is called and the file hashed once per
-// tool per run. Only a success is remembered.
+// for a tool version, so the file is hashed and extracted once per tool per run.
+// Only a success is remembered.
 var (
 	checkedMu   sync.Mutex
 	checkedPath = map[string]string{}

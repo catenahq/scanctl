@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/catenahq/scanctl/internal/config"
@@ -264,6 +265,13 @@ func TestParseLock(t *testing.T) {
 	}
 	if _, err := lock.Version("nope"); err == nil {
 		t.Error("expected error for unpinned tool")
+	}
+	pinned, err := ParseLock([]byte("tools:\n  trivy:\n    repo: aquasecurity/trivy\n    version: 0.71.0\n    sha256:\n      v0.71.0/trivy_0.71.0_Linux-64bit.tar.gz: " + strings.Repeat("a", 64) + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pinned.Tools["trivy"].SHA256["v0.71.0/trivy_0.71.0_Linux-64bit.tar.gz"]; got != strings.Repeat("a", 64) {
+		t.Errorf("sha256 = %q, want the pinned digest", got)
 	}
 	if _, err := ParseLock([]byte("tools: {}\n")); err == nil {
 		t.Error("expected error for empty lock")

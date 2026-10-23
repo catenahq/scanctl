@@ -1,26 +1,36 @@
-# Pinned scanner versions. The runner reads `version`, and `repo` to find the
-# release whose published digest checks each downloaded file; Renovate bumps each line
-# via the customManager in renovate.json. Asset naming + download logic live in
-# internal/runner (typed Go), so this file stays a flat version pin that both
-# the runner and Renovate can read. Do not hand-edit versions -- let Renovate PR
-# them so the bump is scanned + reviewed like any other dependency change.
+# Pinned scanner versions. The runner reads `version`; for a tool it fetches
+# from a GitHub release, also `repo` and `sha256`: the digest of each release
+# file of that version for linux amd64, keyed by the file's path under
+# https://github.com/<repo>/releases/download/. Renovate bumps `version` via the
+# customManager in renovate.json and runs `scanctl refresh-digests` in the same
+# branch, which rewrites `sha256`. Asset naming + download logic live in
+# scanctl/internal/runner (typed Go). Do not hand-edit versions -- let Renovate PR them
+# so the bump is scanned + reviewed like any other dependency change.
 tools:
   trivy:
     repo: aquasecurity/trivy
     # renovate: datasource=github-releases depName=aquasecurity/trivy
     version: 0.76.0
+    sha256:
+      v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz: e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
   osv-scanner:
     repo: google/osv-scanner
     # renovate: datasource=github-releases depName=google/osv-scanner
     version: 2.7.0
+    sha256:
+      v2.7.0/osv-scanner_linux_amd64: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
   gitleaks:
     repo: gitleaks/gitleaks
     # renovate: datasource=github-releases depName=gitleaks/gitleaks
     version: 8.30.1
+    sha256:
+      v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
   gosec:
     repo: securego/gosec
     # renovate: datasource=github-releases depName=securego/gosec
     version: 2.29.0
+    sha256:
+      v2.29.0/gosec_2.29.0_linux_amd64.tar.gz: 6431b119741c1f4a50fdfcf94e782e16b9e642afc8c7fa9b5d39d48bf3003095
   govulncheck:
     module: golang.org/x/vuln
     # renovate: datasource=go depName=golang.org/x/vuln
@@ -29,6 +39,8 @@ tools:
     repo: anchore/syft
     # renovate: datasource=github-releases depName=anchore/syft
     version: 1.54.1
+    sha256:
+      v1.54.1/syft_1.54.1_linux_amd64.tar.gz: c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47
   semgrep:
     # renovate: datasource=pypi depName=semgrep
     version: 1.181.0
@@ -36,6 +48,8 @@ tools:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
     version: 1.31.0
+    sha256:
+      v1.31.0/zizmor-x86_64-unknown-linux-gnu.tar.gz: 95776c59c2d4c0d6e10560647b4830762b8dbcca8d7d9b7469ff227c73a6fee6
   guarddog:
     # renovate: datasource=pypi depName=guarddog
     version: 3.2.0

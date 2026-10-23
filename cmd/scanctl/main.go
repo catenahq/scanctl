@@ -46,6 +46,8 @@ func main() {
 		os.Exit(runCmd(os.Args[2:]))
 	case "accept":
 		os.Exit(acceptCmd(os.Args[2:]))
+	case "refresh-digests":
+		os.Exit(refreshDigestsCmd(os.Args[2:]))
 	case "version", "-v", "--version":
 		fmt.Println("scanctl", version)
 	case "help", "-h", "--help":
@@ -65,6 +67,9 @@ usage:
   scanctl accept -until date [flags] sarif
                                accept the gating third-party image findings of a
                                run's SARIF in the committed baseline until date
+  scanctl refresh-digests [-lock path]
+                               write into tools.lock (default "tools.lock") the
+                               sha256 of each release file of its pinned versions
   scanctl version
 
 accept flags:
@@ -418,6 +423,17 @@ func sbomStep(ctx context.Context, cfg config.Config, lock runner.Lock, root, sb
 			fmt.Println("uploaded SBOM to Dependency-Track")
 		}
 	}
+}
+
+func refreshDigestsCmd(args []string) int {
+	fs := flag.NewFlagSet("refresh-digests", flag.ExitOnError)
+	path := fs.String("lock", "tools.lock", "")
+	_ = fs.Parse(args)
+	if err := runner.RefreshDigests(context.Background(), *path, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "refresh-digests:", err)
+		return 1
+	}
+	return 0
 }
 
 func loadLock(path string) (runner.Lock, error) {

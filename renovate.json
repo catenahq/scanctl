@@ -15,11 +15,17 @@
       "automerge": false
     },
     {
-      "description": "Pinned scanners in tools.lock: group, automerge after cooldown + a green self-scan.",
+      "description": "Pinned scanners in tools.lock: group, automerge after cooldown + a green self-scan. The branch runs scanctl refresh-digests, so the sha256 of each release file of the new versions lands in the bump's commit.",
       "matchManagers": ["custom.regex"],
       "matchFileNames": ["tools.lock"],
       "groupName": "pinned scanners",
-      "automerge": true
+      "automerge": true,
+      "postUpgradeTasks": {
+        "commands": ["go run ./cmd/scanctl refresh-digests"],
+        "fileFilters": ["tools.lock"],
+        "executionMode": "branch",
+        "installTools": { "golang": {} }
+      }
     }
   ],
   "customManagers": [

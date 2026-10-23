@@ -13,11 +13,13 @@ type Lock struct {
 }
 
 // LockEntry is one tool's pin. Repo (GitHub releases) and Module (Go) are
-// mutually exclusive; Version is always set.
+// mutually exclusive; Version is always set. For a GitHub-release tool SHA256
+// holds each release file's sha256, keyed by its path under releases/download/.
 type LockEntry struct {
-	Repo    string `yaml:"repo"`
-	Module  string `yaml:"module"`
-	Version string `yaml:"version"`
+	Repo    string            `yaml:"repo"`
+	Module  string            `yaml:"module"`
+	Version string            `yaml:"version"`
+	SHA256  map[string]string `yaml:"sha256"`
 }
 
 // LoadLock reads tools.lock at path.

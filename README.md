@@ -27,21 +27,25 @@ resale-restricted and runs only under the `full` profile (see Profiles).
 
 Scanner versions are pinned in [`tools.lock`](tools.lock) (embedded in the
 binary) and bumped by Renovate. Release-binary tools (trivy, osv-scanner,
-gitleaks, gosec, zizmor, and syft for the SBOM) are lazy-fetched and cached (set
-`SCANCTL_CACHE` to relocate). Once per run and tool, the file is checked against the
-sha256 digest GitHub publishes for it in the release (`api.github.com`; set
-`GH_TOKEN` or `GITHUB_TOKEN` to lift its rate limit; a release whose owner
-refuses the token, as an organization IP allow list does with a job's token, is
-read without it): a file that differs is
-downloaded again, and a second mismatch, a release file with no digest or an
-unreachable API is a fetch failure, so the scanner counts as one that did not
-run. govulncheck is `go install`ed with the toolchain the scanned module
-selects (its go.mod `toolchain` line), because it type-checks the module with
-the go/types it was built with, and runs under that toolchain, so it grades
-that toolchain's standard library even when the runner sets
-`GOTOOLCHAIN=local`; the Python tools (semgrep, guarddog) are
-installed with `uv tool install`. **Runner prerequisites:** `go` and `uv`
-on `PATH` (the reusable workflow sets both up).
+gitleaks, gosec, zizmor, and syft for the SBOM) are lazy-fetched from their
+release's download URL, with no API call and no token, and cached (set
+`SCANCTL_CACHE` to relocate). tools.lock pins the sha256 of each of their
+release files for linux amd64; elsewhere these tools count as not run. Once per
+run and tool, the file is checked against its pin: a cached file that differs
+is downloaded again, and a second mismatch or a file with no pinned digest is a
+fetch failure, so the scanner counts as one that did not run.
+`scanctl refresh-digests` writes the digests of the pinned versions into
+tools.lock, downloading only the files of a version without them; Renovate runs
+it in every tools.lock bump, and a bump without its digests fails the unit
+tests. A release file re-uploaded under the same tag fails until its tool's
+`sha256` block is deleted and the command run again. A lock passed with `-lock`
+needs the same digests. govulncheck is `go install`ed with the toolchain the
+scanned module selects (its go.mod `toolchain` line), because it type-checks the
+module with the go/types it was built with, and runs under that toolchain, so it
+grades that toolchain's standard library even when the runner sets
+`GOTOOLCHAIN=local`; the Python tools (semgrep, guarddog) are installed with
+`uv tool install`. **Runner prerequisites:** `go` and `uv` on `PATH` (the
+reusable workflow sets both up).
 
 zizmor runs in **block** mode with a bundled policy ([`internal/runner/zizmor-policy.yml`](internal/runner/zizmor-policy.yml),
 passed via `--config`): first-party `catenahq/*` actions may be ref-pinned, every
@@ -94,6 +98,7 @@ scanctl run --baseline-ref origin/main .            # image CVEs gate only if ne
 scanctl run --baseline .scanctl/baseline.sarif .   # accepted findings never gate
 scanctl run --import codeql.sarif .                 # fold in external SARIF
 scanctl accept --until 2026-12-31 scanctl.sarif     # accept a run's gating image findings until a date
+scanctl refresh-digests                       # pin the sha256 of each release file of tools.lock's versions
 ```
 
 Each fetch and scan prints `timing: <step> <seconds>s` on stderr after the
@@ -391,7 +396,7 @@ refuses to start the run.
 ## Layout
 
 ```
-cmd/scanctl       CLI (run | accept | version)
+cmd/scanctl       CLI (run | accept | refresh-digests | version)
 internal/detect   manifest-glob router (ecosystems + workflows present)
 internal/runner   lazy-fetch + subprocess orchestration + SARIF merge
                   (registry tools + guarddog/image per-manifest/per-ref steps)
@@ -400,7 +405,7 @@ internal/sarif    minimal SARIF 2.1.0 types (+ suppressions, properties,
 internal/report   merged SARIF writer + markdown summary
 internal/gate     security-severity / level floor -> exit code
 internal/baseline fingerprint diff (base-commit scan or committed baseline)
-tools.lock        pinned scanner versions (Renovate-managed, embedded)
+tools.lock        pinned scanner versions and release-file digests (Renovate-managed, embedded)
 ```
 
 ## Aggregation plane (optional)
@@ -445,7 +450,8 @@ no release age and are exempt from the cooldown; github-actions same-tag
 `digest` refreshes are disabled outright (a moved tag re-introduces the
 mutable-tag risk that SHA-pinning prevents). Known-CVE fixes are also exempt
 (`vulnerabilityAlerts` automerges with no cooldown). The same cooldown governs
-scanctl's own `tools.lock` scanner pins.
+scanctl's own `tools.lock` scanner pins; their bump branch also runs
+`scanctl refresh-digests`, so the new digests land in the bump's commit.
 
 `secure-base` carries no project-specific operational config (PR limits,
 timezone, labels, schedules) -- layer those on top in your own config. Catena's

@@ -38,6 +38,26 @@ func unrunnableScan(t *testing.T) (root string, args []string) {
 		"-out", filepath.Join(dir, "out.sarif"), "-summary", filepath.Join(dir, "summary.md")}
 }
 
+// A lock that pins no release tool needs no digest: it is not rewritten and
+// makes no download.
+func TestRefreshDigestsLeavesALockWithNoReleaseToolAsItIs(t *testing.T) {
+	committed := []byte("tools:\n  govulncheck:\n    module: golang.org/x/vuln\n    version: 1.9.0\n")
+	path := filepath.Join(t.TempDir(), "tools.lock")
+	if err := os.WriteFile(path, committed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := refreshDigestsCmd([]string{"-lock", path}); code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	got, err := os.ReadFile(path) // #nosec G304 -- path is under the test's temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(committed) {
+		t.Errorf("tools.lock changed:\n%s", got)
+	}
+}
+
 func TestAScanThatDoesNotRunFailsTheGate(t *testing.T) {
 	root, args := unrunnableScan(t)
 	if code := runCmd(append(args, root)); code != 1 {

@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,10 +21,10 @@ import (
 	"github.com/catenahq/scanctl/internal/detect"
 )
 
-// digestOf is a release file's digest as the GitHub API spells it.
+// digestOf is the hex sha256 of a release file's bytes, as tools.lock spells it.
 func digestOf(content string) string {
 	sum := sha256.Sum256([]byte(content))
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:])
 }
 
 // tarGz is a gzipped tar holding one executable file.
@@ -49,79 +48,78 @@ func tarGz(t *testing.T, name, body string) string {
 	return buf.String()
 }
 
-// fakeRelease serves the release v1.0.0 of o/r: the API document and the files.
-type fakeRelease struct {
-	auth      string // Authorization header of the last API call
-	apiCalls  int
+// fakeDownloads serves the release files of v1.0.0 of o/r.
+type fakeDownloads struct {
+	auth      string // Authorization header of the last download
 	downloads int
 }
 
-// serveRelease points the runner at a fake GitHub holding the files in served
-// (name -> bytes at the download URL). digests is each file's digest field; an
-// empty one is published as null. The cache is a fresh directory and no token
-// is set.
-func serveRelease(t *testing.T, served, digests map[string]string) *fakeRelease {
+// serveDownloads points the runner at a fake GitHub holding the files in files
+// (name -> bytes at the download URL) and the platform at linux amd64. The cache
+// is a fresh directory and a token is set, which no download may carry.
+func serveDownloads(t *testing.T, files map[string]string) *fakeDownloads {
 	t.Helper()
-	fr := &fakeRelease{}
-	var srv *httptest.Server
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/o/r/releases/tags/v1.0.0", func(w http.ResponseWriter, r *http.Request) {
-		fr.apiCalls++
-		fr.auth = r.Header.Get("Authorization")
-		type fileDoc struct {
-			Name   string  `json:"name"`
-			URL    string  `json:"browser_download_url"`
-			Digest *string `json:"digest"`
+	fd := &fakeDownloads{}
+	const prefix = "/o/r/releases/download/v1.0.0/"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, ok := files[strings.TrimPrefix(r.URL.Path, prefix)]
+		if !strings.HasPrefix(r.URL.Path, prefix) || !ok {
+			http.NotFound(w, r)
+			return
 		}
-		var doc struct {
-			Assets []fileDoc `json:"assets"`
-		}
-		for name := range served {
-			f := fileDoc{Name: name, URL: srv.URL + "/dl/" + name}
-			if d := digests[name]; d != "" {
-				f.Digest = &d
-			}
-			doc.Assets = append(doc.Assets, f)
-		}
-		_ = json.NewEncoder(w).Encode(doc)
-	})
-	mux.HandleFunc("/dl/", func(w http.ResponseWriter, r *http.Request) {
-		fr.downloads++
-		_, _ = io.WriteString(w, served[strings.TrimPrefix(r.URL.Path, "/dl/")])
-	})
-	srv = httptest.NewServer(mux)
+		fd.downloads++
+		fd.auth = r.Header.Get("Authorization")
+		_, _ = io.WriteString(w, body)
+	}))
 	t.Cleanup(srv.Close)
-	saved := githubAPI
-	githubAPI = srv.URL
-	t.Cleanup(func() { githubAPI = saved })
+	savedURL, savedOS, savedArch := githubDownload, hostOS, hostArch
+	githubDownload, hostOS, hostArch = srv.URL, "linux", "amd64"
+	t.Cleanup(func() { githubDownload, hostOS, hostArch = savedURL, savedOS, savedArch })
 	t.Setenv("SCANCTL_CACHE", t.TempDir())
-	t.Setenv("GH_TOKEN", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	return fr
+	t.Setenv("GH_TOKEN", "tok")
+	t.Setenv("GITHUB_TOKEN", "tok")
+	return fd
 }
 
-var releaseEntry = LockEntry{Repo: "o/r", Version: "1.0.0"}
+// entryFor pins the files of v1.0.0 of o/r by the digests of their bytes.
+func entryFor(files map[string]string) LockEntry {
+	e := LockEntry{Repo: "o/r", Version: "1.0.0", SHA256: map[string]string{}}
+	for name, body := range files {
+		e.SHA256[digestKey("1.0.0", name)] = digestOf(body)
+	}
+	return e
+}
 
-func TestAReleaseFileThatMatchesItsDigestIsUsed(t *testing.T) {
-	fr := serveRelease(t, map[string]string{"scan": "binary"}, map[string]string{"scan": digestOf("binary")})
+// withReleaseTools replaces the release registry for the test.
+func withReleaseTools(t *testing.T, tools map[string]releaseTool) {
+	t.Helper()
+	saved := releaseTools
+	releaseTools = tools
+	t.Cleanup(func() { releaseTools = saved })
+}
+
+func TestAReleaseFileThatMatchesItsPinIsUsed(t *testing.T) {
+	files := map[string]string{"scan": "binary"}
+	fd := serveDownloads(t, files)
 	cached := filepath.Join(cacheRoot(), "scan-1.0.0", "scan")
 	writeFile(t, filepath.Dir(cached), "scan", "binary")
 
-	got, err := releaseFile(context.Background(), "scan", releaseEntry, "scan")
+	got, err := releaseFile(context.Background(), "scan", entryFor(files), "scan")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != cached || fr.downloads != 0 {
-		t.Errorf("releaseFile = %q with %d download(s), want the cached file and none", got, fr.downloads)
+	if got != cached || fd.downloads != 0 {
+		t.Errorf("releaseFile = %q with %d download(s), want the cached file and none", got, fd.downloads)
 	}
 }
 
 func TestAChangedCachedFileIsDownloadedAgain(t *testing.T) {
-	fr := serveRelease(t, map[string]string{"scan": "binary"}, map[string]string{"scan": digestOf("binary")})
+	files := map[string]string{"scan": "binary"}
+	fd := serveDownloads(t, files)
 	cached := filepath.Join(cacheRoot(), "scan-1.0.0", "scan")
 	writeFile(t, filepath.Dir(cached), "scan", "swapped")
 
-	got, err := releaseFile(context.Background(), "scan", releaseEntry, "scan")
+	got, err := releaseFile(context.Background(), "scan", entryFor(files), "scan")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,20 +127,21 @@ func TestAChangedCachedFileIsDownloadedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != "binary" || fr.downloads != 1 {
-		t.Errorf("file = %q after %d download(s), want the published bytes after one", body, fr.downloads)
+	if string(body) != "binary" || fd.downloads != 1 {
+		t.Errorf("file = %q after %d download(s), want the pinned bytes after one", body, fd.downloads)
 	}
 }
 
 func TestAFileThatNeverMatchesIsAnErrorAndIsDeleted(t *testing.T) {
-	fr := serveRelease(t, map[string]string{"scan": "doctored"}, map[string]string{"scan": digestOf("binary")})
+	fd := serveDownloads(t, map[string]string{"scan": "doctored"})
+	entry := entryFor(map[string]string{"scan": "binary"})
 
-	_, err := releaseFile(context.Background(), "scan", releaseEntry, "scan")
-	if err == nil {
-		t.Fatal("a file that does not match its digest was accepted")
+	_, err := releaseFile(context.Background(), "scan", entry, "scan")
+	if err == nil || !strings.Contains(err.Error(), "tools.lock pins "+digestOf("binary")) {
+		t.Fatalf("a file that does not match its pin was accepted, or the error is vague: %v", err)
 	}
-	if fr.downloads != 2 {
-		t.Errorf("downloads = %d, want 2", fr.downloads)
+	if fd.downloads != 2 {
+		t.Errorf("downloads = %d, want 2", fd.downloads)
 	}
 	requireOnlyFiles(t, filepath.Join(cacheRoot(), "scan-1.0.0"))
 }
@@ -151,59 +150,62 @@ func TestAFileThatNeverMatchesIsAnErrorAndIsDeleted(t *testing.T) {
 // removed from its temporary name, and the file already there is the one that
 // failed its own check.
 func TestAFailedDownloadLeavesNoPartialFileAtTheDestination(t *testing.T) {
-	serveRelease(t, map[string]string{"scan": "doctored"}, map[string]string{"scan": digestOf("binary")})
+	serveDownloads(t, map[string]string{"scan": "doctored"})
 	dir := filepath.Join(cacheRoot(), "scan-1.0.0")
 	writeFile(t, dir, "scan", "swapped")
 
-	if _, err := releaseFile(context.Background(), "scan", releaseEntry, "scan"); err == nil {
-		t.Fatal("a file that does not match its digest was accepted")
+	if _, err := releaseFile(context.Background(), "scan", entryFor(map[string]string{"scan": "binary"}), "scan"); err == nil {
+		t.Fatal("a file that does not match its pin was accepted")
 	}
 	requireOnlyFiles(t, dir)
 }
 
-func TestAFileWithoutADigestIsAnError(t *testing.T) {
-	fr := serveRelease(t, map[string]string{"scan": "binary"}, map[string]string{})
+func TestAFileWithoutAPinnedDigestIsAnErrorAndNothingIsDownloaded(t *testing.T) {
+	files := map[string]string{"scan": "binary"}
+	fd := serveDownloads(t, files)
+	missing := LockEntry{Repo: "o/r", Version: "1.0.0"}
+	malformed := LockEntry{Repo: "o/r", Version: "1.0.0", SHA256: map[string]string{"v1.0.0/scan": "sha256:" + digestOf("binary")}}
+	otherVersion := LockEntry{Repo: "o/r", Version: "1.0.0", SHA256: map[string]string{"v0.9.0/scan": digestOf("binary")}}
 
-	if _, err := releaseFile(context.Background(), "scan", releaseEntry, "scan"); err == nil {
-		t.Fatal("a file with no published digest was accepted")
+	for name, entry := range map[string]LockEntry{"no digests": missing, "malformed": malformed, "older version": otherVersion} {
+		_, err := releaseFile(context.Background(), "scan", entry, "scan")
+		if err == nil || !strings.Contains(err.Error(), "refresh-digests") {
+			t.Errorf("%s: error = %v, want a refusal that names scanctl refresh-digests", name, err)
+		}
 	}
-	if fr.downloads != 0 {
-		t.Errorf("downloaded %d time(s) a file nothing could check", fr.downloads)
+	if fd.downloads != 0 {
+		t.Errorf("downloaded %d time(s) a file nothing could check", fd.downloads)
 	}
 }
 
-func TestAFileTheReleaseDoesNotHoldIsAnError(t *testing.T) {
-	serveRelease(t, map[string]string{"other": "x"}, map[string]string{"other": digestOf("x")})
-	if _, err := releaseFile(context.Background(), "scan", releaseEntry, "scan"); err == nil {
-		t.Fatal("a missing release file was accepted")
+func TestAFileTheReleaseDoesNotHoldIsAnErrorNamingTheURL(t *testing.T) {
+	serveDownloads(t, map[string]string{"other": "x"})
+	_, err := releaseFile(context.Background(), "scan", entryFor(map[string]string{"scan": "binary"}), "scan")
+	if err == nil || !strings.Contains(err.Error(), "/o/r/releases/download/v1.0.0/scan: status 404") {
+		t.Fatalf("error = %v, want the download URL and its status", err)
 	}
 }
 
 func TestAPinWithoutARepoIsAnError(t *testing.T) {
-	serveRelease(t, nil, nil)
-	if _, err := releaseFile(context.Background(), "scan", LockEntry{Version: "1.0.0"}, "scan"); err == nil {
+	fd := serveDownloads(t, nil)
+	entry := entryFor(map[string]string{"scan": "binary"})
+	entry.Repo = ""
+	if _, err := releaseFile(context.Background(), "scan", entry, "scan"); err == nil {
 		t.Fatal("a tool pinned without a repo was fetched")
+	}
+	if fd.downloads != 0 {
+		t.Errorf("downloads = %d, want 0", fd.downloads)
 	}
 }
 
-func TestTheAPICallCarriesTheTokenWhenOneIsSet(t *testing.T) {
+func TestADownloadCarriesNoToken(t *testing.T) {
 	files := map[string]string{"scan": "binary"}
-	digests := map[string]string{"scan": digestOf("binary")}
-	for _, c := range []struct{ gh, github, want string }{
-		{"", "", ""},
-		{"a", "", "Bearer a"},
-		{"", "b", "Bearer b"},
-		{"a", "b", "Bearer a"},
-	} {
-		fr := serveRelease(t, files, digests)
-		t.Setenv("GH_TOKEN", c.gh)
-		t.Setenv("GITHUB_TOKEN", c.github)
-		if _, err := releaseFile(context.Background(), "scan", releaseEntry, "scan"); err != nil {
-			t.Fatal(err)
-		}
-		if fr.auth != c.want {
-			t.Errorf("GH_TOKEN=%q GITHUB_TOKEN=%q: Authorization = %q, want %q", c.gh, c.github, fr.auth, c.want)
-		}
+	fd := serveDownloads(t, files)
+	if _, err := releaseFile(context.Background(), "scan", entryFor(files), "scan"); err != nil {
+		t.Fatal(err)
+	}
+	if fd.downloads != 1 || fd.auth != "" {
+		t.Errorf("%d download(s) with Authorization %q, want one with none", fd.downloads, fd.auth)
 	}
 }
 
@@ -211,12 +213,13 @@ func TestTheAPICallCarriesTheTokenWhenOneIsSet(t *testing.T) {
 // at its path, through a temporary file that is renamed into place.
 func TestAnArchiveBinaryIsExtractedAfreshAfterTheCheck(t *testing.T) {
 	archive := tarGz(t, "scan", "real binary")
-	serveRelease(t, map[string]string{"scan.tar.gz": archive}, map[string]string{"scan.tar.gz": digestOf(archive)})
+	files := map[string]string{"scan.tar.gz": archive}
+	serveDownloads(t, files)
+	withReleaseTools(t, map[string]releaseTool{"scan": {asset: func(string) string { return "scan.tar.gz" }, bin: "scan"}})
 	swapped := filepath.Join(cacheRoot(), "scan-1.0.0", "scan")
 	writeFile(t, filepath.Dir(swapped), "scan", "swapped binary")
-	ensure := ghTarGz("scan", func(string) string { return "scan.tar.gz" }, "scan")
 
-	bin, err := ensure(context.Background(), releaseEntry, "")
+	bin, err := releaseEnsure("scan")(context.Background(), entryFor(files), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,21 +252,23 @@ func requireOnlyFiles(t *testing.T, dir string, names ...string) {
 	}
 }
 
-// One API call, one hash and one extraction per tool per process: a later call
+// One hash, one download and one extraction per tool per process: a later call
 // reuses the checked path.
 func TestAToolIsCheckedOncePerProcess(t *testing.T) {
 	archive := tarGz(t, "scan", "real binary")
-	fr := serveRelease(t, map[string]string{"scan.tar.gz": archive}, map[string]string{"scan.tar.gz": digestOf(archive)})
-	ensure := ghTarGz("scan", func(string) string { return "scan.tar.gz" }, "scan")
+	files := map[string]string{"scan.tar.gz": archive}
+	fd := serveDownloads(t, files)
+	withReleaseTools(t, map[string]releaseTool{"scan": {asset: func(string) string { return "scan.tar.gz" }, bin: "scan"}})
+	ensure := releaseEnsure("scan")
 
-	first, err := ensure(context.Background(), releaseEntry, "")
+	first, err := ensure(context.Background(), entryFor(files), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A second call would hash and extract again; it would put the archive's
 	// bytes back over this.
 	writeFile(t, filepath.Dir(first), "scan", "changed after the check")
-	second, err := ensure(context.Background(), releaseEntry, "")
+	second, err := ensure(context.Background(), entryFor(files), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,81 +276,34 @@ func TestAToolIsCheckedOncePerProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second != first || fr.apiCalls != 1 || fr.downloads != 1 || string(body) != "changed after the check" {
-		t.Errorf("second call: path %q (first %q), %d API call(s), %d download(s), file %q; want the reused path after one call and one download",
-			second, first, fr.apiCalls, fr.downloads, body)
+	if second != first || fd.downloads != 1 || string(body) != "changed after the check" {
+		t.Errorf("second call: path %q (first %q), %d download(s), file %q; want the reused path after one download",
+			second, first, fd.downloads, body)
 	}
 }
 
 func TestAFailedCheckIsNotRemembered(t *testing.T) {
-	fr := serveRelease(t, map[string]string{"scan_linux": "doctored"}, map[string]string{"scan_linux": digestOf("binary")})
-	ensure := ghBinary("scan", func(string) string { return "scan_linux" })
+	fd := serveDownloads(t, map[string]string{"scan_linux": "doctored"})
+	withReleaseTools(t, map[string]releaseTool{"scan": {asset: func(string) string { return "scan_linux" }}})
+	ensure := releaseEnsure("scan")
+	entry := entryFor(map[string]string{"scan_linux": "binary"})
 
 	for i := 0; i < 2; i++ {
-		if _, err := ensure(context.Background(), releaseEntry, ""); err == nil {
+		if _, err := ensure(context.Background(), entry, ""); err == nil {
 			t.Fatal("a doctored file was accepted")
 		}
 	}
-	if fr.apiCalls != 2 {
-		t.Errorf("API calls = %d, want the failure tried again", fr.apiCalls)
-	}
-}
-
-// aquasecurity's IP allow list answers a job's token with 403; the release is
-// then read with no token. A spent rate limit is never retried without one.
-func TestATokenTheOwnerRefusesIsDroppedButASpentLimitIsNot(t *testing.T) {
-	release := `{"assets":[{"name":"scan","browser_download_url":"https://example.invalid/scan","digest":"` + digestOf("binary") + `"}]}`
-	for _, c := range []struct {
-		remaining string
-		wantCalls int
-		wantOK    bool
-	}{{"4999", 2, true}, {"0", 1, false}} {
-		var calls []string
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls = append(calls, r.Header.Get("Authorization"))
-			if r.Header.Get("Authorization") != "" {
-				w.Header().Set("X-RateLimit-Remaining", c.remaining)
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
-			_, _ = io.WriteString(w, release)
-		}))
-		saved := githubAPI
-		githubAPI = srv.URL
-		t.Setenv("GH_TOKEN", "job-token")
-		a, err := releaseAsset(context.Background(), "aquasecurity/trivy", "v1.0.0", "scan")
-		githubAPI = saved
-		srv.Close()
-		if (err == nil) != c.wantOK || len(calls) != c.wantCalls {
-			t.Errorf("remaining %s: err = %v, calls %q; want ok=%v after %d call(s)", c.remaining, err, calls, c.wantOK, c.wantCalls)
-		}
-		if c.wantOK && (calls[1] != "" || a.sha256 == "") {
-			t.Errorf("remaining %s: second call Authorization %q, asset %+v; want an anonymous call that finds the asset", c.remaining, calls[1], a)
-		}
-	}
-}
-
-func TestAnExhaustedRateLimitSaysHowToLiftIt(t *testing.T) {
-	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(status)
-		}))
-		saved := githubAPI
-		githubAPI = srv.URL
-		_, err := releaseAsset(context.Background(), "o/r", "v1.0.0", "scan")
-		githubAPI = saved
-		srv.Close()
-		if err == nil || !strings.Contains(err.Error(), "rate limit") || !strings.Contains(err.Error(), "GH_TOKEN") {
-			t.Errorf("status %d: error = %v, want it to name the rate limit and GH_TOKEN", status, err)
-		}
+	if fd.downloads != 4 {
+		t.Errorf("downloads = %d, want the failure tried again (4 over two calls)", fd.downloads)
 	}
 }
 
 func TestAPlainBinaryIsCheckedAndExecutable(t *testing.T) {
-	serveRelease(t, map[string]string{"scan_linux": "binary"}, map[string]string{"scan_linux": digestOf("binary")})
-	ensure := ghBinary("scan", func(string) string { return "scan_linux" })
+	files := map[string]string{"scan_linux": "binary"}
+	serveDownloads(t, files)
+	withReleaseTools(t, map[string]releaseTool{"scan": {asset: func(string) string { return "scan_linux" }}})
 
-	bin, err := ensure(context.Background(), releaseEntry, "")
+	bin, err := releaseEnsure("scan")(context.Background(), entryFor(files), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,6 +313,23 @@ func TestAPlainBinaryIsCheckedAndExecutable(t *testing.T) {
 	}
 	if fi.Mode().Perm()&0o100 == 0 {
 		t.Errorf("mode = %v, want executable", fi.Mode())
+	}
+}
+
+func TestReleaseScannersAreFetchedOnLinuxAmd64Only(t *testing.T) {
+	files := map[string]string{"scan_linux": "binary"}
+	fd := serveDownloads(t, files)
+	withReleaseTools(t, map[string]releaseTool{"scan": {asset: func(string) string { return "scan_linux" }}})
+
+	for _, c := range []struct{ os, arch string }{{"darwin", "arm64"}, {"linux", "arm64"}, {"linux", "386"}} {
+		hostOS, hostArch = c.os, c.arch
+		_, err := releaseEnsure("scan")(context.Background(), entryFor(files), "")
+		if err == nil || !strings.Contains(err.Error(), "linux amd64") || !strings.Contains(err.Error(), c.os+"/"+c.arch) {
+			t.Errorf("%s/%s: error = %v, want it to name linux amd64 and the host", c.os, c.arch, err)
+		}
+	}
+	if fd.downloads != 0 {
+		t.Errorf("downloads = %d, want 0", fd.downloads)
 	}
 }
 
