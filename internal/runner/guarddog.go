@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/catenahq/scanctl/internal/config"
 )
@@ -54,7 +55,9 @@ func guarddogStep(ctx context.Context, cfg config.Config, lock Lock, root string
 		out.fail(cfg, "guarddog", "guarddog", "unpinned in tools.lock")
 		return
 	}
+	start := time.Now()
 	bin, err := pyInstall(ctx, "guarddog", version, "guarddog")
+	out.timed("fetch guarddog", start)
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("guarddog: fetch failed: %v", err))
 		out.Skipped["guarddog"] = "fetch failed"
@@ -76,7 +79,9 @@ func guarddogStep(ctx context.Context, cfg config.Config, lock Lock, root string
 		// the internal table, not user input
 		cmd := exec.CommandContext(ctx, bin, j.ecosystem, "verify", j.manifest, "--output-format", "sarif")
 		cmd.Dir = root
+		start := time.Now()
 		merged, failure := mergeSARIFRun("guarddog", cmd, outPath, true, out)
+		out.timed("scan guarddog "+j.manifest, start)
 		if merged {
 			ran = true
 		}

@@ -5,6 +5,7 @@ import (
 	"debug/buildinfo"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 
@@ -34,7 +35,7 @@ type toolDef struct {
 	// is resale-clean and runs in both profiles.
 	fullOnly bool
 	applies  func(detect.Result) bool
-	ensure   func(ctx context.Context, version, root string) (binPath string, err error)
+	ensure   func(ctx context.Context, e LockEntry, root string) (binPath string, err error)
 	// invoke builds the argv. det is passed so a tool can shape its invocation
 	// from what was detected (e.g. semgrep selects rule packs per ecosystem);
 	// tools that do not need it ignore the arg.
@@ -58,8 +59,7 @@ var registry = []toolDef{
 		scanType: "Trivy Scan",
 		applies:  func(r detect.Result) bool { return true }, // fs scan always useful
 		ensure: ghTarGz("trivy", func(v string) string {
-			return fmt.Sprintf("https://github.com/aquasecurity/trivy/releases/download/v%s/trivy_%s_Linux-%s.tar.gz",
-				v, v, trivyArch())
+			return fmt.Sprintf("trivy_%s_Linux-%s.tar.gz", v, trivyArch())
 		}, "trivy"),
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			// License scanning is intentionally omitted here: permissive-license
@@ -82,8 +82,7 @@ var registry = []toolDef{
 		scanType: "OSV Scan",
 		applies:  func(r detect.Result) bool { return r.HasLockfile },
 		ensure: ghBinary("osv-scanner", func(v string) string {
-			return fmt.Sprintf("https://github.com/google/osv-scanner/releases/download/v%s/osv-scanner_linux_%s",
-				v, runtime.GOARCH)
+			return "osv-scanner_linux_" + runtime.GOARCH
 		}),
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			return invocation{args: []string{
@@ -96,8 +95,7 @@ var registry = []toolDef{
 		scanType: "Gitleaks Scan",
 		applies:  func(r detect.Result) bool { return true },
 		ensure: ghTarGz("gitleaks", func(v string) string {
-			return fmt.Sprintf("https://github.com/gitleaks/gitleaks/releases/download/v%s/gitleaks_%s_linux_%s.tar.gz",
-				v, v, gitleaksArch())
+			return fmt.Sprintf("gitleaks_%s_linux_%s.tar.gz", v, gitleaksArch())
 		}, "gitleaks"),
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			args := []string{"detect", "--source", root, "--report-format", "sarif",
@@ -121,8 +119,7 @@ var registry = []toolDef{
 		scanType: "Gosec Scanner",
 		applies:  func(r detect.Result) bool { return r.Has(detect.Go) },
 		ensure: ghTarGz("gosec", func(v string) string {
-			return fmt.Sprintf("https://github.com/securego/gosec/releases/download/v%s/gosec_%s_linux_%s.tar.gz",
-				v, v, runtime.GOARCH)
+			return fmt.Sprintf("gosec_%s_linux_%s.tar.gz", v, runtime.GOARCH)
 		}, "gosec"),
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			// G101 (hardcoded credentials) reads names such as settings keys
@@ -138,8 +135,8 @@ var registry = []toolDef{
 		name:     "govulncheck",
 		scanType: "Govulncheck Scanner",
 		applies:  func(r detect.Result) bool { return r.Has(detect.Go) },
-		ensure: func(ctx context.Context, version, root string) (string, error) {
-			return goInstall(ctx, "golang.org/x/vuln", "cmd/govulncheck", version, root)
+		ensure: func(ctx context.Context, e LockEntry, root string) (string, error) {
+			return goInstall(ctx, "golang.org/x/vuln", "cmd/govulncheck", e.Version, root)
 		},
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			inv := invocation{
@@ -167,8 +164,8 @@ var registry = []toolDef{
 		scanType: "Semgrep JSON Report",
 		fullOnly: true,
 		applies:  func(r detect.Result) bool { return r.Has(detect.Go) || r.Has(detect.Node) || r.Has(detect.Python) },
-		ensure: func(ctx context.Context, version, _ string) (string, error) {
-			return pyInstall(ctx, "semgrep", version, "semgrep")
+		ensure: func(ctx context.Context, e LockEntry, _ string) (string, error) {
+			return pyInstall(ctx, "semgrep", e.Version, "semgrep")
 		},
 		invoke: func(bin, root, out string, det detect.Result) invocation {
 			args := []string{"scan", "--metrics=off", "--sarif-output", out, "--quiet"}
@@ -188,8 +185,7 @@ var registry = []toolDef{
 		scanType: "SARIF",
 		applies:  func(r detect.Result) bool { return r.HasWorkflows },
 		ensure: ghTarGz("zizmor", func(v string) string {
-			return fmt.Sprintf("https://github.com/zizmorcore/zizmor/releases/download/v%s/zizmor-%s-unknown-linux-gnu.tar.gz",
-				v, zizmorArch())
+			return fmt.Sprintf("zizmor-%s-unknown-linux-gnu.tar.gz", zizmorArch())
 		}, "zizmor"),
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			args := []string{"--format", "sarif", "--persona", "regular"}
@@ -238,6 +234,18 @@ func trivyArgs(subcommand string, rest ...string) []string {
 	return append([]string{subcommand, "--skip-version-check", "--disable-telemetry"}, rest...)
 }
 
+// downloadTrivyDB fetches trivy's vulnerability database into its cache without
+// scanning, so the time it takes is its own step. The scans that follow find it
+// there, and fetch it themselves when this fails.
+func downloadTrivyDB(ctx context.Context, bin string) error {
+	// #nosec G204 -- bin is the pinned trivy; the args are fixed flags
+	cmd := exec.CommandContext(ctx, bin, trivyArgs("image", "--download-db-only", "--quiet")...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w\n%s", err, out)
+	}
+	return nil
+}
+
 // trivyArch maps GOARCH to trivy's asset token.
 func trivyArch() string {
 	if runtime.GOARCH == "arm64" {
@@ -262,30 +270,33 @@ func zizmorArch() string {
 	return "x86_64"
 }
 
-// ghBinary returns an ensure func for a plain (non-archive) release binary,
-// cached per version under the cache root.
-func ghBinary(tool string, urlFn func(version string) string) func(context.Context, string, string) (string, error) {
-	return func(ctx context.Context, version, _ string) (string, error) {
-		dest := filepath.Join(cacheRoot(), tool+"-"+version, tool)
-		if fi, err := os.Stat(dest); err == nil && !fi.IsDir() {
-			return dest, nil
-		}
-		if err := downloadBinary(ctx, urlFn(version), dest); err != nil {
+// ghBinary returns an ensure func for a plain (non-archive) release binary:
+// the release file assetFn names, checked against its published digest (see
+// releaseFile) and made executable.
+func ghBinary(tool string, assetFn func(version string) string) func(context.Context, LockEntry, string) (string, error) {
+	return func(ctx context.Context, e LockEntry, _ string) (string, error) {
+		bin, err := releaseFile(ctx, tool, e, assetFn(e.Version))
+		if err != nil {
 			return "", err
 		}
-		return dest, nil
+		if err := os.Chmod(bin, 0o755); err != nil { // #nosec G302 -- a scanner binary must be executable
+			return "", err
+		}
+		return bin, nil
 	}
 }
 
-// ghTarGz returns an ensure func for a .tar.gz release asset, extracting
-// binInArchive, cached per version.
-func ghTarGz(tool string, urlFn func(version string) string, binInArchive string) func(context.Context, string, string) (string, error) {
-	return func(ctx context.Context, version, _ string) (string, error) {
-		dest := filepath.Join(cacheRoot(), tool+"-"+version, tool)
-		if fi, err := os.Stat(dest); err == nil && !fi.IsDir() {
-			return dest, nil
+// ghTarGz returns an ensure func for a .tar.gz release asset: the release file
+// assetFn names, checked against its published digest (see releaseFile), with
+// binInArchive extracted from it afresh on every call.
+func ghTarGz(tool string, assetFn func(version string) string, binInArchive string) func(context.Context, LockEntry, string) (string, error) {
+	return func(ctx context.Context, e LockEntry, _ string) (string, error) {
+		archive, err := releaseFile(ctx, tool, e, assetFn(e.Version))
+		if err != nil {
+			return "", err
 		}
-		if err := downloadTarGzBinary(ctx, urlFn(version), binInArchive, dest); err != nil {
+		dest := filepath.Join(filepath.Dir(archive), tool)
+		if err := extractTarGz(archive, binInArchive, dest); err != nil {
 			return "", err
 		}
 		return dest, nil

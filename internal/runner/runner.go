@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/detect"
@@ -30,11 +31,25 @@ type Outcome struct {
 	// no report, whatever the tool's mode. Written, its run would close the
 	// alerts of the image that went unscanned, so the SARIF leaves it out.
 	Incomplete map[sarif.Category]bool
+	// Timings is how long each fetch and scan took, in the order they ran.
+	Timings []Timing
+}
+
+// Timing is the duration of one named step, such as "fetch trivy" or
+// "scan trivy-image nginx:1.31".
+type Timing struct {
+	Step     string
+	Duration time.Duration
 }
 
 func newOutcome() *Outcome {
 	return &Outcome{Report: sarif.New(), Skipped: map[string]string{}, Failed: map[string]string{},
 		Incomplete: map[sarif.Category]bool{}}
+}
+
+// timed records the time since start under step.
+func (o *Outcome) timed(step string, start time.Time) {
+	o.Timings = append(o.Timings, Timing{Step: step, Duration: time.Since(start)})
 }
 
 // fail records that the scan named key produced no report. It fails the run
@@ -70,21 +85,32 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 			out.Skipped[td.name] = "not applicable to this repo"
 			continue
 		}
-		version, err := lock.Version(td.name)
+		entry, err := lock.Entry(td.name)
 		if err != nil {
 			out.Warnings = append(out.Warnings, err.Error())
 			out.Skipped[td.name] = "unpinned"
 			out.fail(cfg, td.name, td.name, "unpinned in tools.lock")
 			continue
 		}
-		bin, err := td.ensure(ctx, version, root)
+		start := time.Now()
+		bin, err := td.ensure(ctx, entry, root)
+		out.timed("fetch "+td.name, start)
 		if err != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: fetch failed: %v", td.name, err))
 			out.Skipped[td.name] = "fetch failed"
 			out.fail(cfg, td.name, td.name, "fetch failed")
 			continue
 		}
+		if td.name == "trivy" {
+			start = time.Now()
+			if err := downloadTrivyDB(ctx, bin); err != nil {
+				out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-db: download failed: %v", err))
+			}
+			out.timed("fetch trivy-db", start)
+		}
+		start = time.Now()
 		rep, warn := runTool(ctx, td, bin, root, det, cfg.Ignore)
+		out.timed("scan "+td.name, start)
 		if warn != "" {
 			out.Warnings = append(out.Warnings, warn)
 		}
@@ -266,10 +292,10 @@ func mergeSARIFRun(driver string, cmd *exec.Cmd, outPath string, stdoutToOut boo
 
 // trivyEnsure returns the pinned trivy binary, reusing the registry entry's
 // fetch closure so the fs scan and image scan share one download.
-func trivyEnsure(ctx context.Context, version string) (string, error) {
+func trivyEnsure(ctx context.Context, e LockEntry) (string, error) {
 	for _, td := range registry {
 		if td.name == "trivy" {
-			return td.ensure(ctx, version, "")
+			return td.ensure(ctx, e, "")
 		}
 	}
 	return "", fmt.Errorf("trivy not in registry")

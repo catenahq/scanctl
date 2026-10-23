@@ -27,8 +27,13 @@ resale-restricted and runs only under the `full` profile (see Profiles).
 
 Scanner versions are pinned in [`tools.lock`](tools.lock) (embedded in the
 binary) and bumped by Renovate. Release-binary tools (trivy, osv-scanner,
-gitleaks, gosec, zizmor) are lazy-fetched and cached (set `SCANCTL_CACHE` to
-relocate); govulncheck is `go install`ed with the toolchain the scanned module
+gitleaks, gosec, zizmor, and syft for the SBOM) are lazy-fetched and cached (set
+`SCANCTL_CACHE` to relocate). Before every use, the file is checked against the
+sha256 digest GitHub publishes for it in the release (`api.github.com`; set
+`GH_TOKEN` or `GITHUB_TOKEN` to lift its rate limit): a file that differs is
+downloaded again, and a second mismatch, a release file with no digest or an
+unreachable API is a fetch failure, so the scanner counts as one that did not
+run. govulncheck is `go install`ed with the toolchain the scanned module
 selects (its go.mod `toolchain` line), because it type-checks the module with
 the go/types it was built with, and runs under that toolchain, so it grades
 that toolchain's standard library even when the runner sets
@@ -88,6 +93,10 @@ scanctl run --baseline .scanctl/baseline.sarif .   # accepted findings never gat
 scanctl run --import codeql.sarif .                 # fold in external SARIF
 scanctl accept --until 2026-12-31 scanctl.sarif     # accept a run's gating image findings until a date
 ```
+
+Each fetch and scan prints `timing: <step> <seconds>s` on stderr after the
+warnings (`fetch trivy`, `fetch trivy-db`, `scan trivy-image <ref>`, `sbom`);
+the scan of the merge-base's images prints its own, each step starting `base `.
 
 Exit code is non-zero when a tool in `block` mode produces a finding at or above
 the configured gate floor, or when a `block`-mode scan produces no report at all
@@ -358,14 +367,17 @@ rule id is the advisory followed by the image's repository
 (`CVE-2026-1234/postgres`): a CVE two images report shows each image's own
 score. The repository leaves out the tag, so a bump keeps the rule id.
 
-On a private repo without Advanced Security the code-scanning upload is a
-no-op, so the workflow also (a) posts the findings summary as one sticky PR
+A private repo skips the code-scanning upload, which needs Advanced Security
+there, so the workflow also (a) posts the findings summary as one sticky PR
 comment (updated in place) and (b) uploads `scanctl.sarif` + the SBOM as a
 downloadable artifact. Together with `--baseline` these give private repos the
 same triage surface as the public Security tab. Inputs: `baseline`,
 `dismiss-baseline`, `import-sarif`, `profile`, `no-gate`, `path`, `runner`,
 `scanctl-version`, and `pre-scan` + `own-images` for an image the repo builds
-(`pre-scan` runs the build, `own-images` names the refs it produced). Optional
+(`pre-scan` runs the build, `own-images` names the refs it produced). The
+pre-scan step runs with GitHub's cache service exposed, so its `docker buildx
+build` can pass `--cache-from` and `--cache-to type=gha,version=2`; the scan
+step runs with the cache token blanked, so no scanner holds it. Optional
 secrets `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN` log the run in to Docker Hub
 before the scan, for repos pinning more images than the anonymous pull limit
 covers. A scanctl branch named like the caller's branch (a pull

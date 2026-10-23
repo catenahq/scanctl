@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/catenahq/scanctl/internal/config"
 	"github.com/catenahq/scanctl/internal/sarif"
@@ -68,7 +69,7 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 		out.Skipped["trivy-image"] = "trivy disabled"
 		return nil
 	}
-	version, err := lock.Version("trivy")
+	entry, err := lock.Entry("trivy")
 	if err != nil {
 		out.Warnings = append(out.Warnings, err.Error())
 		out.Skipped["trivy-image"] = "unpinned"
@@ -76,7 +77,7 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 		unscanned(jobs...)
 		return nil
 	}
-	bin, err := trivyEnsure(ctx, version)
+	bin, err := trivyEnsure(ctx, entry)
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: fetch failed: %v", err))
 		out.Skipped["trivy-image"] = "fetch failed"
@@ -128,6 +129,7 @@ func scanImage(ctx context.Context, bin, ignore, ref, prop string, out *Outcome)
 	// scanctl.yml or from a pin pattern it declares over the repo's own files
 	cmd := exec.CommandContext(ctx, bin, args...)
 	merged := len(out.Report.Runs)
+	defer out.timed("scan trivy-image "+ref, time.Now())
 	ok, failure := mergeSARIFRun("trivy", cmd, outPath, false, out)
 	if ok {
 		tagImage(out.Report.Runs[merged:], prop, ref)

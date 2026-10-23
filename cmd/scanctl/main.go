@@ -184,6 +184,7 @@ func runCmd(args []string) int {
 	for _, w := range out.Warnings {
 		fmt.Fprintln(os.Stderr, "warning:", w)
 	}
+	printTimings("", out.Timings)
 
 	// Fold in externally-produced SARIF (e.g. a CodeQL job's output) before
 	// the report, gate, and uploads so everything sees one merged view.
@@ -299,6 +300,14 @@ func runCmd(args []string) int {
 	return 0
 }
 
+// printTimings writes one "timing: <step> <seconds>s" line per step on stderr,
+// each step name starting with prefix.
+func printTimings(prefix string, timings []runner.Timing) {
+	for _, t := range timings {
+		fmt.Fprintf(os.Stderr, "timing: %s%s %.1fs\n", prefix, t.Step, t.Duration.Seconds())
+	}
+}
+
 // failedSection lists the blocking scans that produced no report; "" when
 // every one ran.
 func failedSection(failed map[string]string) string {
@@ -392,7 +401,10 @@ func sbomStep(ctx context.Context, cfg config.Config, lock runner.Lock, root, sb
 		path = "scanctl.sbom.cdx.json"
 		defer os.Remove(path)
 	}
-	if err := runner.GenerateSBOM(ctx, root, lock, path); err != nil {
+	start := time.Now()
+	err := runner.GenerateSBOM(ctx, root, lock, path)
+	printTimings("", []runner.Timing{{Step: "sbom", Duration: time.Since(start)}})
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "warning: sbom:", err)
 		return
 	}

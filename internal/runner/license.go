@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/catenahq/scanctl/internal/config"
 )
@@ -22,14 +23,14 @@ func licenseStep(ctx context.Context, cfg config.Config, lock Lock, root string,
 		out.Skipped["trivy-license"] = "disabled"
 		return
 	}
-	version, err := lock.Version("trivy")
+	entry, err := lock.Entry("trivy")
 	if err != nil {
 		out.Warnings = append(out.Warnings, err.Error())
 		out.Skipped["trivy-license"] = "unpinned"
 		out.fail(cfg, "trivy-license", "trivy-license", "unpinned in tools.lock")
 		return
 	}
-	bin, err := trivyEnsure(ctx, version)
+	bin, err := trivyEnsure(ctx, entry)
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-license: fetch failed: %v", err))
 		out.Skipped["trivy-license"] = "fetch failed"
@@ -58,7 +59,9 @@ func licenseStep(ctx context.Context, cfg config.Config, lock Lock, root string,
 	// #nosec G204 -- bin is the pinned trivy; args are fixed flags + reviewed
 	// license ids from scanctl.yml; root is the scan target path
 	cmd := exec.CommandContext(ctx, bin, args...)
+	start := time.Now()
 	merged, failure := mergeSARIFRun("trivy-license", cmd, outPath, false, out)
+	out.timed("scan trivy-license", start)
 	if merged {
 		out.Ran = append(out.Ran, "trivy-license")
 	}

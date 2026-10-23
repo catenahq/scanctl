@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/catenahq/scanctl/internal/config"
@@ -119,7 +120,7 @@ func fakeRegistry(t *testing.T) {
 	registry = []toolDef{{
 		name:    "fake",
 		applies: func(detect.Result) bool { return true },
-		ensure:  func(context.Context, string, string) (string, error) { return "/bin/false", nil },
+		ensure:  func(context.Context, LockEntry, string) (string, error) { return "/bin/false", nil },
 		invoke:  func(bin, root, out string, _ detect.Result) invocation { return invocation{} },
 	}}
 }
@@ -142,6 +143,24 @@ func TestABlockingScannerThatDoesNotRunIsFailed(t *testing.T) {
 		if len(out.Warnings) == 0 {
 			t.Errorf("mode %s: no warning says why the scanner failed", mode)
 		}
+	}
+}
+
+// Every tool's fetch and scan is timed, a failed scan's too.
+func TestEachFetchAndScanReportsItsDuration(t *testing.T) {
+	fakeRegistry(t)
+	lock := Lock{Tools: map[string]LockEntry{"fake": {Version: "1"}}}
+	cfg := config.Config{Tools: map[string]config.ToolConfig{"fake": {Enabled: true, Mode: config.ModeReport}}}
+	out, err := Run(context.Background(), t.TempDir(), cfg, lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steps []string
+	for _, tm := range out.Timings {
+		steps = append(steps, tm.Step)
+	}
+	if want := []string{"fetch fake", "scan fake"}; !slices.Equal(steps, want) {
+		t.Errorf("timings = %v, want %v", steps, want)
 	}
 }
 

@@ -4,9 +4,13 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -24,6 +28,16 @@ const pyToolPython = "3.13"
 // ~150MB) while still capping a malicious archive.
 const maxArtifactBytes = 1 << 30 // 1 GiB
 
+// githubAPI is the base URL of the GitHub REST API, which publishes the sha256
+// of every release file.
+var githubAPI = "https://api.github.com"
+
+// maxReleaseDocBytes bounds the release document read from the API.
+const maxReleaseDocBytes = 16 << 20
+
+// digestRx is a release file's digest as the API spells it.
+var digestRx = regexp.MustCompile(`^sha256:([0-9a-f]{64})$`)
+
 // cacheRoot is where fetched scanner binaries and the govulncheck installs land,
 // reused across runs (on a persistent runner this means one download per pin).
 func cacheRoot() string {
@@ -37,72 +51,163 @@ func cacheRoot() string {
 	return filepath.Join(base, "scanctl", "tools")
 }
 
-// download streams url to dest, creating parent dirs. Fails on non-200.
-func download(ctx context.Context, url, dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
-		return err
+// asset is a release file as the GitHub API describes it: where to download it
+// and the sha256 GitHub holds for it.
+type asset struct {
+	url, sha256 string
+}
+
+// githubToken is the token the API call carries: GH_TOKEN, else GITHUB_TOKEN.
+// It lifts the API's rate limit and goes to no other host.
+func githubToken() string {
+	if t := os.Getenv("GH_TOKEN"); t != "" {
+		return t
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	return os.Getenv("GITHUB_TOKEN")
+}
+
+// releaseAsset reads the release tag of repo from the GitHub API and returns
+// the file called name. A file with no digest is an error: nothing could check
+// it.
+func releaseAsset(ctx context.Context, repo, tag, name string) (asset, error) {
+	if repo == "" {
+		return asset{}, fmt.Errorf("%s: tools.lock pins no repo", name)
+	}
+	endpoint := githubAPI + "/repos/" + repo + "/releases/tags/" + url.PathEscape(tag)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return err
+		return asset{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if tok := githubToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("GET %s: %w", url, err)
+		return asset{}, fmt.Errorf("GET %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+		return asset{}, fmt.Errorf("GET %s: status %d", endpoint, resp.StatusCode)
+	}
+	var rel struct {
+		Assets []struct {
+			Name   string `json:"name"`
+			URL    string `json:"browser_download_url"`
+			Digest string `json:"digest"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxReleaseDocBytes)).Decode(&rel); err != nil {
+		return asset{}, fmt.Errorf("GET %s: %w", endpoint, err)
+	}
+	for _, a := range rel.Assets {
+		if a.Name != name {
+			continue
+		}
+		m := digestRx.FindStringSubmatch(a.Digest)
+		if m == nil {
+			return asset{}, fmt.Errorf("%s %s: GitHub publishes no sha256 digest for %s (got %q)", repo, tag, name, a.Digest)
+		}
+		return asset{url: a.URL, sha256: m[1]}, nil
+	}
+	return asset{}, fmt.Errorf("%s %s: no release file %s", repo, tag, name)
+}
+
+// download streams src to dest, creating parent dirs, and returns the sha256 of
+// the bytes written. Fails on non-200; a failed download leaves no file.
+func download(ctx context.Context, src, dest string) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("GET %s: %w", src, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET %s: status %d", src, resp.StatusCode)
 	}
 	f, err := os.Create(dest) // #nosec G304 -- dest is under our own cache root, not user-controlled
 	if err != nil {
-		return err
+		return "", err
+	}
+	h := sha256.New()
+	_, err = io.Copy(io.MultiWriter(f, h), resp.Body)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(dest)
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// fileSHA256 returns the hex sha256 of the file at p.
+func fileSHA256(p string) (string, error) {
+	f, err := os.Open(p) // #nosec G304 -- p is under our own cache root
+	if err != nil {
+		return "", err
 	}
 	defer f.Close()
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		return err
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
 	}
-	return nil
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// downloadBinary fetches a plain executable (no archive) to destBin and marks
-// it executable.
-func downloadBinary(ctx context.Context, url, destBin string) error {
-	if err := download(ctx, url, destBin); err != nil {
-		return err
-	}
-	return os.Chmod(destBin, 0o755) // #nosec G302 -- a scanner binary must be executable
-}
-
-// downloadTarGzBinary fetches a .tar.gz, extracts the single entry named
-// binInArchive, and writes it to destBin (executable).
-func downloadTarGzBinary(ctx context.Context, url, binInArchive, destBin string) error {
-	tmp, err := os.CreateTemp("", "scanctl-dl-*.tar.gz")
+// releaseFile returns the path of the release file name of tool's pinned
+// release, kept at <cache>/<tool>-<version>/<name>. The file is hashed on every
+// call and must match the digest GitHub publishes for it. A file that is absent
+// or does not match is downloaded afresh; a second mismatch is an error and
+// leaves no file.
+func releaseFile(ctx context.Context, tool string, e LockEntry, name string) (string, error) {
+	a, err := releaseAsset(ctx, e.Repo, "v"+e.Version, name)
 	if err != nil {
-		return err
+		return "", err
 	}
-	tmpPath := tmp.Name()
-	_ = tmp.Close() // only the path is needed; download re-creates the file
-	defer os.Remove(tmpPath)
+	dest := filepath.Join(cacheRoot(), tool+"-"+e.Version, name)
+	got := ""
+	for attempt := 0; attempt < 2; attempt++ {
+		sum, err := fileSHA256(dest)
+		if err != nil {
+			_ = os.Remove(dest)
+			if sum, err = download(ctx, a.url, dest); err != nil {
+				return "", err
+			}
+		}
+		if sum == a.sha256 {
+			return dest, nil
+		}
+		got = sum
+		_ = os.Remove(dest)
+	}
+	return "", fmt.Errorf("%s %s: sha256 is %s, GitHub publishes %s", e.Repo, name, got, a.sha256)
+}
 
-	if err := download(ctx, url, tmpPath); err != nil {
-		return err
-	}
-	f, err := os.Open(tmpPath) // #nosec G304 -- tmpPath is our own CreateTemp file
+// extractTarGz writes the single entry of the archive at archivePath named
+// binInArchive to destBin (executable).
+func extractTarGz(archivePath, binInArchive, destBin string) error {
+	f, err := os.Open(archivePath) // #nosec G304 -- archivePath is under our own cache root
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return fmt.Errorf("gunzip %s: %w", url, err)
+		return fmt.Errorf("gunzip %s: %w", archivePath, err)
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return fmt.Errorf("%s: %q not found in archive", url, binInArchive)
+			return fmt.Errorf("%s: %q not found in archive", archivePath, binInArchive)
 		}
 		if err != nil {
 			return err
@@ -125,7 +230,7 @@ func downloadTarGzBinary(ctx context.Context, url, binInArchive, destBin string)
 		}
 		if n > maxArtifactBytes {
 			_ = out.Close()
-			return fmt.Errorf("%s: %q exceeds %d bytes", url, binInArchive, maxArtifactBytes)
+			return fmt.Errorf("%s: %q exceeds %d bytes", archivePath, binInArchive, maxArtifactBytes)
 		}
 		if err := out.Close(); err != nil {
 			return err

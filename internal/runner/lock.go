@@ -42,11 +42,17 @@ func ParseLock(data []byte) (Lock, error) {
 	return lock, nil
 }
 
-// Version returns the pinned version for a tool, or an error if unpinned.
-func (l Lock) Version(tool string) (string, error) {
+// Entry returns the pin for a tool, or an error if unpinned.
+func (l Lock) Entry(tool string) (LockEntry, error) {
 	e, ok := l.Tools[tool]
 	if !ok || e.Version == "" {
-		return "", fmt.Errorf("tool %q not pinned in tools.lock", tool)
+		return LockEntry{}, fmt.Errorf("tool %q not pinned in tools.lock", tool)
 	}
-	return e.Version, nil
+	return e, nil
+}
+
+// Version returns the pinned version for a tool, or an error if unpinned.
+func (l Lock) Version(tool string) (string, error) {
+	e, err := l.Entry(tool)
+	return e.Version, err
 }

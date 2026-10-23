@@ -11,21 +11,20 @@ import (
 // ensureSyft lazy-fetches the pinned syft release (CycloneDX SBOM generator).
 // syft sits outside the SARIF registry because it emits a bill of materials,
 // not findings; it feeds Dependency-Track (P3), not the merged report.
-func ensureSyft(ctx context.Context, version string) (string, error) {
+func ensureSyft(ctx context.Context, e LockEntry) (string, error) {
 	fetch := ghTarGz("syft", func(v string) string {
-		return fmt.Sprintf("https://github.com/anchore/syft/releases/download/v%s/syft_%s_linux_%s.tar.gz",
-			v, v, runtime.GOARCH)
+		return fmt.Sprintf("syft_%s_linux_%s.tar.gz", v, runtime.GOARCH)
 	}, "syft")
-	return fetch(ctx, version, "")
+	return fetch(ctx, e, "")
 }
 
 // GenerateSBOM writes a CycloneDX JSON SBOM of root to outPath using syft.
 func GenerateSBOM(ctx context.Context, root string, lock Lock, outPath string) error {
-	version, err := lock.Version("syft")
+	entry, err := lock.Entry("syft")
 	if err != nil {
 		return err
 	}
-	bin, err := ensureSyft(ctx, version)
+	bin, err := ensureSyft(ctx, entry)
 	if err != nil {
 		return fmt.Errorf("syft fetch: %w", err)
 	}

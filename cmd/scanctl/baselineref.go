@@ -59,6 +59,7 @@ func baselineRefSet(ctx context.Context, root, sha, cfgPath, profile string, cfg
 	for _, w := range out.Warnings {
 		fmt.Fprintln(os.Stderr, "warning: baseline-ref:", w)
 	}
+	printTimings("base ", out.Timings)
 	// A base image that did not scan suppresses nothing, so its findings on
 	// HEAD gate: stricter, never looser.
 	for ref, why := range out.Failed {

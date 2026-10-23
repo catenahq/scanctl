@@ -25,10 +25,40 @@ func stubTrivy(t *testing.T) string {
 	saved := registry
 	t.Cleanup(func() { registry = saved })
 	registry = []toolDef{{
-		name:   "trivy",
-		ensure: func(context.Context, string, string) (string, error) { return bin, nil },
+		name:    "trivy",
+		applies: func(detect.Result) bool { return true },
+		ensure:  func(context.Context, LockEntry, string) (string, error) { return bin, nil },
+		invoke:  func(_, _, _ string, _ detect.Result) invocation { return invocation{args: []string{"fs"}} },
 	}}
 	return argv
+}
+
+// The vulnerability database is fetched as a step of its own, before any scan,
+// with the flags that keep trivy quiet to its maker.
+func TestTheVulnerabilityDatabaseIsDownloadedOnItsOwn(t *testing.T) {
+	argv := stubTrivy(t)
+	cfg := config.Config{Tools: map[string]config.ToolConfig{"trivy": {Enabled: true, Mode: config.ModeBlock}}}
+	lock := Lock{Tools: map[string]LockEntry{"trivy": {Version: "1"}}}
+	out, err := Run(context.Background(), t.TempDir(), cfg, lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(argv) // #nosec G304 -- path is under the test's temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.Fields(strings.Split(string(got), "\n")[0])
+	requireNoTelemetryFlags(t, first, "image")
+	if !slices.Contains(first, "--download-db-only") {
+		t.Errorf("first trivy call = %v, want --download-db-only", first)
+	}
+	var steps []string
+	for _, tm := range out.Timings {
+		steps = append(steps, tm.Step)
+	}
+	if want := []string{"fetch trivy", "fetch trivy-db", "scan trivy"}; !slices.Equal(steps, want) {
+		t.Errorf("timings = %v, want %v", steps, want)
+	}
 }
 
 // Without both flags trivy reports its install id, command and flags to its
@@ -68,7 +98,8 @@ func TestTheImageScanSendsNothingToTheScannersMaker(t *testing.T) {
 		Tools:  map[string]config.ToolConfig{"trivy": {Enabled: true, Mode: config.ModeBlock}},
 	}
 	lock := Lock{Tools: map[string]LockEntry{"trivy": {Version: "1"}}}
-	if _, err := ScanImages(context.Background(), t.TempDir(), cfg, lock); err != nil {
+	out, err := ScanImages(context.Background(), t.TempDir(), cfg, lock)
+	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(argv) // #nosec G304 -- path is under the test's temp dir
@@ -76,6 +107,9 @@ func TestTheImageScanSendsNothingToTheScannersMaker(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireNoTelemetryFlags(t, strings.Fields(string(got)), "image")
+	if len(out.Timings) != 1 || out.Timings[0].Step != "scan trivy-image nginx:1.31-alpine" {
+		t.Errorf("timings = %v, want the image scan", out.Timings)
+	}
 }
 
 func goRepo() detect.Result {

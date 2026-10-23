@@ -283,7 +283,7 @@ func TestScanImagesAppliesNoIgnoreFile(t *testing.T) {
 	t.Cleanup(func() { registry = saved })
 	registry = []toolDef{{
 		name:   "trivy",
-		ensure: func(context.Context, string, string) (string, error) { return bin, nil },
+		ensure: func(context.Context, LockEntry, string) (string, error) { return bin, nil },
 	}}
 	cfg := config.Config{
 		Images: []string{"nginx:1.31-alpine"},
@@ -359,7 +359,7 @@ func fakeTrivy(t *testing.T, reports map[string]string) {
 	t.Cleanup(func() { registry = saved })
 	registry = []toolDef{{
 		name:   "trivy",
-		ensure: func(context.Context, string, string) (string, error) { return bin, nil },
+		ensure: func(context.Context, LockEntry, string) (string, error) { return bin, nil },
 	}}
 }
 
