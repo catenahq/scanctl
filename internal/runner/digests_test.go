@@ -60,8 +60,8 @@ func serveAt(t *testing.T, files map[string]string) *[]string {
 	return &requested
 }
 
-// This is the check that fails a tools.lock bump whose digests were not
-// refreshed.
+// This is the check that fails a tools.lock bump that keeps the previous
+// version's digests.
 func TestEveryReleaseFileOfThePinnedVersionsHasItsDigest(t *testing.T) {
 	lock, err := LoadLock(committedLock)
 	if err != nil {
