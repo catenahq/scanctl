@@ -38,9 +38,9 @@ tools:
   syft:
     repo: anchore/syft
     # renovate: datasource=github-releases depName=anchore/syft
-    version: 1.54.1
+    version: 1.55.0
     sha256:
-      v1.54.1/syft_1.54.1_linux_amd64.tar.gz: c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47
+      v1.55.0/syft_1.55.0_linux_amd64.tar.gz: bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d
   semgrep:
     # renovate: datasource=pypi depName=semgrep
     version: 1.181.0
