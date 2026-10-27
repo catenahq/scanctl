@@ -10,11 +10,6 @@
       "automerge": true
     },
     {
-      "matchManagers": ["gomod"],
-      "matchUpdateTypes": ["major"],
-      "automerge": false
-    },
-    {
       "description": "Pinned scanners in tools.lock: group, automerge after cooldown + a green self-scan. The branch runs scanctl refresh-digests, so the sha256 of each release file of the new versions lands in the bump's commit.",
       "matchManagers": ["custom.regex"],
       "matchFileNames": ["tools.lock"],
