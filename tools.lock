@@ -10,9 +10,9 @@ tools:
   trivy:
     repo: aquasecurity/trivy
     # renovate: datasource=github-releases depName=aquasecurity/trivy
-    version: 0.76.0
+    version: 0.76.1
     sha256:
-      v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz: e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
+      v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
   osv-scanner:
     repo: google/osv-scanner
     # renovate: datasource=github-releases depName=google/osv-scanner
@@ -43,7 +43,7 @@ tools:
       v1.55.0/syft_1.55.0_linux_amd64.tar.gz: bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d
   semgrep:
     # renovate: datasource=pypi depName=semgrep
-    version: 1.181.0
+    version: 1.182.0
   zizmor:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
