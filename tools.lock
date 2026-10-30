@@ -28,9 +28,9 @@ tools:
   gosec:
     repo: securego/gosec
     # renovate: datasource=github-releases depName=securego/gosec
-    version: 2.29.0
+    version: 2.30.0
     sha256:
-      v2.29.0/gosec_2.29.0_linux_amd64.tar.gz: 6431b119741c1f4a50fdfcf94e782e16b9e642afc8c7fa9b5d39d48bf3003095
+      v2.30.0/gosec_2.30.0_linux_amd64.tar.gz: 3fcce2c4e802ff4169217874602a7df355e9a37bcb6ffaa34b08f3d5f336cdfb
   govulncheck:
     module: golang.org/x/vuln
     # renovate: datasource=go depName=golang.org/x/vuln
