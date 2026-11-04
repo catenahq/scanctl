@@ -50,8 +50,10 @@ func licenseStep(ctx context.Context, cfg config.Config, lock Lock, root string,
 	// --severity HIGH,CRITICAL keeps the scan to restricted/forbidden licenses
 	// (copyleft, unknown) and drops the hundreds of permissive-license notices
 	// that would otherwise bury the report (one per transitive dependency).
+	// --offline-scan: as the vulnerability fs scan, so a Maven Central block
+	// cannot end the license pass without a report.
 	args := trivyArgs("fs", "--quiet", "--format", "sarif",
-		"--output", outPath, "--scanners", "license", "--severity", "HIGH,CRITICAL")
+		"--output", outPath, "--scanners", "license", "--severity", "HIGH,CRITICAL", "--offline-scan")
 	if len(cfg.License.Ignored) > 0 {
 		args = append(args, "--ignored-licenses", strings.Join(cfg.License.Ignored, ","))
 	}

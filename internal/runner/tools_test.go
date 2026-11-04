@@ -79,6 +79,29 @@ func TestTheFsScanSendsNothingToTheScannersMaker(t *testing.T) {
 	}
 }
 
+// Maven Central blocks shared CI addresses with 429, which ends trivy with no
+// report: both fs passes resolve offline.
+func TestTheFsScansAskNoPackageRegistry(t *testing.T) {
+	for _, td := range registry {
+		if td.name == "trivy" {
+			if args := td.invoke("trivy", t.TempDir(), "out.sarif", detect.Result{}).args; !slices.Contains(args, "--offline-scan") {
+				t.Errorf("trivy fs argv = %v, want --offline-scan", args)
+			}
+		}
+	}
+	argv := stubTrivy(t)
+	cfg := config.Config{Tools: map[string]config.ToolConfig{"trivy-license": {Enabled: true}}}
+	lock := Lock{Tools: map[string]LockEntry{"trivy": {Version: "1"}}}
+	licenseStep(context.Background(), cfg, lock, t.TempDir(), newOutcome())
+	got, err := os.ReadFile(argv) // #nosec G304 -- path is under the test's temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(strings.Fields(string(got)), "--offline-scan") {
+		t.Errorf("trivy license argv = %s, want --offline-scan", got)
+	}
+}
+
 func TestTheLicenseScanSendsNothingToTheScannersMaker(t *testing.T) {
 	argv := stubTrivy(t)
 	cfg := config.Config{Tools: map[string]config.ToolConfig{"trivy-license": {Enabled: true}}}

@@ -63,8 +63,11 @@ var registry = []toolDef{
 			// License scanning is intentionally omitted here: permissive-license
 			// notices are noise, and license *policy* is owned by Dependency-Track
 			// (P3), which reasons over the full SBOM rather than per-file matches.
+			// --offline-scan: Maven Central blocks shared CI addresses, and trivy
+			// ends with no report on its 429. trivy then resolves only what a pom
+			// states itself; osv-scanner resolves the full tree through deps.dev.
 			args := trivyArgs("fs", "--quiet", "--format", "sarif", "--output", out,
-				"--scanners", "vuln,misconfig,secret", "--ignore-unfixed")
+				"--scanners", "vuln,misconfig,secret", "--ignore-unfixed", "--offline-scan")
 			// The same ignore file the image scan honours. trivy reads neither
 			// on its own, so without this a repo's suppressions apply to its
 			// images and not to its tree -- one file, two answers, and no way
