@@ -25,6 +25,10 @@ resale-restricted and runs only under the `full` profile (see Profiles).
 | [semgrep](https://github.com/semgrep/semgrep) | LGPL-2.1 (registry packs restricted) | multi-language SAST (auto-selected packs) | source ecosystem present **and** `profile: full` |
 | trivy (license) | Apache-2.0 | dependency license scan (copyleft/unknown), advisory | always (separate `trivy-license` driver, report-mode) |
 
+Both trivy fs passes resolve packages offline (`--offline-scan`): Maven Central
+blocks shared CI addresses, which would end trivy with no report. trivy reads
+what a manifest states itself; osv-scanner resolves the full Maven tree.
+
 Scanner versions are pinned in [`tools.lock`](tools.lock) (embedded in the
 binary) and bumped by Renovate. Release-binary tools (trivy, osv-scanner,
 gitleaks, gosec, zizmor, and syft for the SBOM) are lazy-fetched from their
