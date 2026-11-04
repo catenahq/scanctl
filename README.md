@@ -427,7 +427,10 @@ warning, never failing the scan.
 ## Profiles
 
 - `sellable` (default): resale-clean -- only permissively-licensed tools, no
-  Semgrep registry rules, no deps.dev/Google API.
+  Semgrep registry rules. One call goes to Google's deps.dev API: osv-scanner
+  resolves a Maven `pom.xml`'s transitive dependencies through it (its default;
+  `--no-resolve` turns it off, and the tree then goes unscanned, since trivy's fs
+  passes run offline).
 - `full`: also runs resale-restricted tools (`fullOnly`, currently `semgrep`
   with its registry packs), for personal use or a client-operates-their-own-box
   engagement. Catena's own repos run `full` (via `-profile full` in the reusable
@@ -484,4 +487,5 @@ infra as part of a service you perform, but not to resell or offer as a managed
 service. The bundled scanners keep their own licenses and are invoked as
 separate processes (mere aggregation), which keeps that boundary clean.
 Resale-clean by construction: the `sellable` profile uses no Semgrep registry
-rules and no deps.dev/Google API (the `full` profile, used internally, does).
+rules (the `full` profile, used internally, does). Both profiles let osv-scanner
+ask Google's deps.dev API for a Maven pom's dependency versions (see Profiles).

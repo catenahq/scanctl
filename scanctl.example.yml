@@ -1,9 +1,10 @@
 # scanctl configuration. Every field is optional -- with no file at all,
 # `scanctl run .` uses these same defaults. Copy to scanctl.yml to customize.
 
-# Tool profile. "sellable" (default) is resale-clean: no Semgrep registry rules,
-# no deps.dev/Google API. "full" additionally enables resale-restricted tools
-# for personal / client-operates-own-box use.
+# Tool profile. "sellable" (default) is resale-clean: no Semgrep registry rules;
+# osv-scanner still asks Google's deps.dev API for a Maven pom's dependency
+# versions (README, Profiles). "full" additionally enables resale-restricted
+# tools for personal / client-operates-own-box use.
 profile: sellable
 
 # Gate floor: a tool in "block" mode fails the run on a finding at or above this
