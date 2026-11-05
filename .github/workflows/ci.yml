@@ -20,8 +20,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  same-tree:
+    # Reuses the result of an earlier run on the same tree; every job below
+    # needs it.
+    name: same tree (ci)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run: ${{ steps.tree.outputs.run }}
+    steps:
+      - id: tree
+        uses: catenahq/contracts/.github/actions/same-tree@89d3994d7cc56eaf9e7136e4dc4823dbd606880a # main
+        with:
+          siblings: catenahq/contracts
+
   test:
     name: build + vet + test
+    needs: same-tree
+    if: needs.same-tree.outputs.run != 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -39,6 +57,8 @@ jobs:
     # Rules every catena repo keeps. The check lives in catenahq/contracts and
     # runs from there.
     name: Repo rules
+    needs: same-tree
+    if: needs.same-tree.outputs.run != 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -56,6 +76,8 @@ jobs:
 
   self-scan:
     name: scanctl scans scanctl (dogfood)
+    needs: same-tree
+    if: needs.same-tree.outputs.run != 'false'
     runs-on: ubuntu-latest
     permissions:
       contents: read
