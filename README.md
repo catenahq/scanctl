@@ -348,6 +348,7 @@ jobs:
   security:
     uses: catenahq/scanctl/.github/workflows/github-reusable.yml@main
     permissions:
+      actions: read            # the same-tree lookup of earlier runs
       contents: read
       security-events: write   # code-scanning upload (public / GHAS repos)
       pull-requests: write     # sticky findings comment (private-repo parity)
@@ -394,8 +395,11 @@ before the scan, for repos pinning more images than the anonymous pull limit
 covers. A scanctl branch named like the caller's branch (a pull
 request's head, then its base) takes precedence over `scanctl-version`, so a
 scanctl change runs against every caller's branch of the same name before it
-merges. The calling job must grant all three permissions above, or GitHub
-refuses to start the run.
+merges. The workflow's first job, `same tree`, reuses the result of an earlier
+run of the caller's workflow on the same tree and the same scanctl branch
+(contracts' `same-tree` action), skipping the scan; a reused failure fails the
+job, and a scheduled run never reuses. The calling job must grant all four
+permissions above, or GitHub refuses to start the run.
 
 ## Layout
 

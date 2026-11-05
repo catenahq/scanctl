@@ -8,7 +8,11 @@ name: scanctl
 # pull_request or push introduces them, and on a scheduled run whenever a fix
 # exists; scanctl reads the commit to compare with from the event.
 #
-# The caller's job must grant all three permissions below: GitHub refuses to
+# The first job, same-tree, looks for an earlier run of the caller's workflow on
+# the same tree (and the same scanctl branch) and reuses its result: the scan is
+# skipped, and a reused failure fails the job. A scheduled run never reuses.
+#
+# The caller's job must grant all four permissions below: GitHub refuses to
 # start a run whose called job asks for more than the caller granted.
 #
 # Caller example:
@@ -25,6 +29,7 @@ name: scanctl
 #       #   DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 #       #   DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 #       permissions:
+#         actions: read            # the same-tree lookup of earlier runs
 #         contents: read
 #         security-events: write   # code-scanning upload (public / GHAS only)
 #         pull-requests: write     # sticky findings comment (needed on private repos)
@@ -81,7 +86,23 @@ on:
         required: false
 
 jobs:
+  same-tree:
+    name: same tree
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run: ${{ steps.tree.outputs.run }}
+    steps:
+      - id: tree
+        uses: catenahq/contracts/.github/actions/same-tree@89d3994d7cc56eaf9e7136e4dc4823dbd606880a # main
+        with:
+          siblings: catenahq/scanctl
+
   scan:
+    needs: same-tree
+    if: needs.same-tree.outputs.run != 'false'
     runs-on: ${{ inputs.runner }}
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
