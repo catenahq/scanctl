@@ -38,18 +38,18 @@ tools:
   syft:
     repo: anchore/syft
     # renovate: datasource=github-releases depName=anchore/syft
-    version: 1.55.0
+    version: 1.56.0
     sha256:
-      v1.55.0/syft_1.55.0_linux_amd64.tar.gz: bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d
+      v1.56.0/syft_1.56.0_linux_amd64.tar.gz: 1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528
   semgrep:
     # renovate: datasource=pypi depName=semgrep
     version: 1.183.0
   zizmor:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
-    version: 1.31.1
+    version: 1.32.0
     sha256:
-      v1.31.1/zizmor-x86_64-unknown-linux-gnu.tar.gz: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
+      v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz: bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
   guarddog:
     # renovate: datasource=pypi depName=guarddog
     version: 3.2.0
