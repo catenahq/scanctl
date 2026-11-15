@@ -103,7 +103,7 @@ func TestDismissMatchesToolNamesInAnyCaseAndByUploadName(t *testing.T) {
 
 	rep := report("trivy", result("trivy", "CVE-1", "go.mod", 3, true))
 	image := report("trivy", result("trivy", "CVE-2/redis", "usr/bin/x", 1, true))
-	image.Runs[0].AutomationDetails = &sarif.AutomationDetails{ID: sarif.ImageCategory}
+	image.Runs[0].AutomationDetails = &sarif.AutomationDetails{ID: sarif.ImageCategory("redis:8.10.1")}
 	rep.Merge(image)
 
 	c := Client{BaseURL: srv.URL, Owner: "o", Repo: "r", Token: "secret", HTTPClient: srv.Client()}

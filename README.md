@@ -98,6 +98,7 @@ caller's when there is one, else its `scanctl-version` input (see "In CI").
 scanctl run .                 # detect, scan, merge SARIF, gate
 scanctl run --no-gate .       # scan + report, always exit 0
 scanctl run --out out.sarif --summary summary.md ./subdir
+scanctl run --out out.sarif --upload-dir out-sarif/ .  # upload set: <=20 runs per file
 scanctl run --baseline-ref origin/main .            # image CVEs gate only if new vs the merge-base
 scanctl run --baseline .scanctl/baseline.sarif .   # accepted findings never gate
 scanctl run --import codeql.sarif .                 # fold in external SARIF
@@ -358,28 +359,31 @@ jobs:
 ```
 
 The SARIF scanctl writes holds one run per tool and code-scanning category:
-the fs scan and the own images are one trivy run, the third-party images
-(`images:` and `image_pins:`) a second one, uploaded as tool `trivy-image` in
-the category `images/`. A written run keeps its 5,000 most severe results,
-GitHub's own cap (it rejects a run over 25,000 whole); the summary, the gate
-and `--dismiss-baseline` still read every finding. A repository that uploaded
-image findings as tool `trivy`, category `images`, deletes that configuration
-once, after the first run with this version (Security and quality, Code
-scanning, Tool status, Trivy, `images`, Delete configuration). Code
-scanning refuses a file holding two runs of one tool and category, or more
-than 20 runs, so the upload goes through whatever the number of images a scan
-covers. An analysis closes every alert of its tool and category it does not
-report and leaves the other categories' alerts as they were, so scanctl writes
-no run for a category one of its scans did not complete: a run that scans only
-the pins its change touched writes no `images` run; a run where an image's scan
-failed after its retry writes no run in that image's category (`images`, or
-trivy's default for an image the repo builds); and a run where trivy's fs scan
-or one guarddog manifest's scan failed writes no run in that tool's default
-category, even though another scan (the repo's own images, another manifest)
-reported into it. An alert therefore opens or closes only on a run that scanned
-everything its category covers, such as a scheduled one. Until then, the alerts
-of the scans that did report stay as they were too. The summary and the gate
-still read every finding.
+the fs scan and the own images are one trivy run, and every third-party image
+(`images:` and `image_pins:`) has a category of its own, `images/<repository>/`,
+uploaded as tool `trivy-image`. A written run keeps its 5,000 most severe
+results, GitHub's own cap (it rejects a run over 25,000 whole); the summary,
+the gate and `--dismiss-baseline` still read every finding. A repository that
+uploaded image findings as tool `trivy`, category `images`, deletes that
+configuration once, after the first run with this version (Security and
+quality, Code scanning, Tool status, Trivy, `images`, Delete configuration).
+
+Code scanning refuses a file holding two runs of one tool and category, or
+more than 20 runs, so `--upload-dir` writes the upload set as a directory of
+SARIF files, each holding at most 20 runs, which is what the reusable workflow
+passes to `upload-sarif`. An analysis closes every alert of its tool and
+category it does not report and leaves the other categories' alerts as they
+were, so scanctl writes no run for a category one of its scans did not
+complete: a run that scans only the pins its change touched writes runs for
+those images alone; a run where an image's scan failed after its retry writes
+no run in that image's category, so the other images' alerts still update; and
+a run where trivy's fs scan or one guarddog manifest's scan failed writes no
+run in that tool's default category, even though another scan (the repo's own
+images, another manifest) reported into it. An alert therefore opens or closes
+only on a run that scanned everything its category covers. An image that stops
+being pinned keeps its alerts until its configuration is deleted by hand
+(Security and quality, Code scanning, Tool status, `trivy-image`, the image's
+category). The summary and the gate still read every finding.
 
 Code scanning reads a finding's severity from its rule, so an image finding's
 rule id is the advisory followed by the image's repository
@@ -388,9 +392,9 @@ score. The repository leaves out the tag, so a bump keeps the rule id.
 
 A private repo skips the code-scanning upload, which needs Advanced Security
 there, so the workflow also (a) posts the findings summary as one sticky PR
-comment (updated in place) and (b) uploads `scanctl.sarif` + the SBOM as a
-downloadable artifact. Together with `--baseline` these give private repos the
-same triage surface as the public Security tab. Inputs: `baseline`,
+comment (updated in place) and (b) uploads `scanctl.sarif`, the `scanctl-sarif/`
+upload set and the SBOM as a downloadable artifact. Together with `--baseline`
+these give private repos the same triage surface as the public Security tab. Inputs: `baseline`,
 `dismiss-baseline`, `import-sarif`, `profile`, `no-gate`, `path`, `runner`,
 `scanctl-version`, and `pre-scan` + `own-images` for an image the repo builds
 (`pre-scan` runs the build, `own-images` names the refs it produced). The

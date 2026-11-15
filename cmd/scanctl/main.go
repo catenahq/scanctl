@@ -82,6 +82,11 @@ run flags:
   -lock string     path to tools.lock (default: embedded copy)
   -profile string  override the config profile ("sellable" or "full")
   -out string      merged SARIF output path (default "scanctl.sarif")
+  -upload-dir string
+                   write the code-scanning upload set to this directory: the
+                   same runs, split into SARIF files of at most 20 runs each
+                   (code scanning's per-file cap), the shape a
+                   github/codeql-action/upload-sarif call takes as a directory
   -summary string  markdown summary output path (default: stdout only)
   -sbom string     write a CycloneDX SBOM to this path (syft)
   -baseline string optional SARIF of accepted findings; they are suppressed on
@@ -120,6 +125,7 @@ func runCmd(args []string) int {
 	lockPath := fs.String("lock", "", "")
 	profile := fs.String("profile", "", "")
 	outPath := fs.String("out", "scanctl.sarif", "")
+	uploadDir := fs.String("upload-dir", "", "")
 	summaryPath := fs.String("summary", "", "")
 	sbomOut := fs.String("sbom", "", "")
 	noGate := fs.Bool("no-gate", false, "")
@@ -242,7 +248,7 @@ func runCmd(args []string) int {
 			if n := baseline.Apply(out.Report, baseline.FromReport(live)); n > 0 {
 				fmt.Printf("baseline: suppressed %d known finding(s) from %s\n", n, *baselinePath)
 			}
-			imagesWhole := !pinsScoped && !out.Incomplete[runner.ThirdPartyImages]
+			imagesWhole := !pinsScoped && !out.ImagesIncomplete()
 			stale = baseline.Stale(baseRep, out.Report, imagesWhole)
 		}
 
@@ -264,12 +270,11 @@ func runCmd(args []string) int {
 		}
 	}
 
-	// A run that scanned only the pins its change touched, or one of whose scans
-	// completed only part of its category, writes no run in that category:
-	// uploaded, it would close the alerts of everything the missing scan covers.
-	if pinsScoped {
-		out.Incomplete[runner.ThirdPartyImages] = true
-	}
+	// A run that scanned only the pins its change touched writes runs for those
+	// images alone; a scan that completed only part of its category marks that
+	// category incomplete. Either way no run is written for a category the run
+	// did not scan, so the upload leaves those alerts as they were and the scans
+	// that did run update theirs.
 	written := map[sarif.Category]bool{}
 	for _, run := range out.Report.Runs {
 		written[run.Category()] = true
@@ -282,6 +287,14 @@ func runCmd(args []string) int {
 	if err := report.WriteSARIF(out.Report, *outPath, out.Incomplete); err != nil {
 		fmt.Fprintln(os.Stderr, "write sarif:", err)
 		return 2
+	}
+	if *uploadDir != "" {
+		n, err := report.WriteUploadSet(out.Report, *uploadDir, out.Incomplete)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "write upload sarif:", err)
+			return 2
+		}
+		fmt.Printf("sarif: %d upload file(s) of at most %d runs in %s\n", n, report.MaxRunsPerFile, *uploadDir)
 	}
 
 	ctx := context.Background()
