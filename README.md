@@ -195,7 +195,9 @@ REST API (`dismissed_reason: "won't fix"`), so the Security tab actually
 reflects what the baseline says is already known. Matching is coarser than the
 baseline's own fingerprint (tool + rule + file + line, no message text --
 that's all the alerts API exposes), so it can only ever close an alert that
-would already gate-pass; it never touches an unsuppressed finding. Requires
+would already gate-pass; it never touches an unsuppressed finding. An alert it
+dismissed reopens when its entry expires, so the Security tab shows what the
+run fails on; an alert someone else dismissed is left alone. Requires
 `GITHUB_REPOSITORY` + `GH_TOKEN`/`GITHUB_TOKEN` (both already present in
 Actions); a no-op outside that environment, and always skipped on
 `pull_request` events -- a feature-branch run is never the source of truth for

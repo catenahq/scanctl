@@ -2,12 +2,14 @@ package dismiss
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/catenahq/scanctl/internal/baseline"
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
@@ -159,6 +161,47 @@ func TestDismissLeavesAFindingSuppressedOnlyByTheDiffOpen(t *testing.T) {
 	}
 }
 
+// An alert scanctl dismissed reopens when its acceptance expires; one a person
+// dismissed, or one whose entry is still live, stays as it is.
+func TestReopenReopensOnlyAlertsScanctlDismissedForAnExpiredEntry(t *testing.T) {
+	var reopened []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			if r.URL.Query().Get("state") != "dismissed" {
+				t.Errorf("state = %q, want dismissed", r.URL.Query().Get("state"))
+			}
+			fmt.Fprintf(w, `[
+				{"number": 1, "dismissed_comment": %q, "rule": {"id": "CVE-1/redis"}, "tool": {"name": "trivy-image"}, "most_recent_instance": {"location": {"path": "usr/bin/x", "start_line": 1}}},
+				{"number": 2, "dismissed_comment": "by hand", "rule": {"id": "CVE-1/redis"}, "tool": {"name": "trivy-image"}, "most_recent_instance": {"location": {"path": "usr/bin/x", "start_line": 1}}},
+				{"number": 3, "dismissed_comment": %q, "rule": {"id": "CVE-9/redis"}, "tool": {"name": "trivy-image"}, "most_recent_instance": {"location": {"path": "usr/bin/y", "start_line": 1}}}
+			]`, dismissComment, dismissComment)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || r.Method != http.MethodPatch || body["state"] != "open" {
+			t.Errorf("unexpected request %s, body %v (%v)", r.Method, body, err)
+		}
+		var n int
+		fmt.Sscanf(r.URL.Path, "/repos/o/r/code-scanning/alerts/%d", &n)
+		reopened = append(reopened, n)
+	}))
+	defer srv.Close()
+
+	// CVE-1 gates again because its entry expired; CVE-9 is accepted by a live entry.
+	rep := report("trivy", result("trivy", "CVE-1/redis", "usr/bin/x", 1, false), result("trivy", "CVE-9/redis", "usr/bin/y", 1, true))
+	rep.Runs[0].AutomationDetails = &sarif.AutomationDetails{ID: sarif.ImageCategory("redis:8.10.1")}
+	expired := []baseline.Entry{{Tool: "trivy", Result: result("trivy", "CVE-1/redis", "usr/bin/x", 1, false)}}
+
+	c := Client{BaseURL: srv.URL, Owner: "o", Repo: "r", Token: "t", HTTPClient: srv.Client()}
+	n, err := c.Reopen(context.Background(), rep, expired)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if n != 1 || len(reopened) != 1 || reopened[0] != 1 {
+		t.Errorf("reopened %d alerts %v, want [1]", n, reopened)
+	}
+}
+
 func TestListOpenAlertsFollowsPagination(t *testing.T) {
 	page := 0
 	mux := http.NewServeMux()
@@ -174,7 +217,7 @@ func TestListOpenAlertsFollowsPagination(t *testing.T) {
 		fmt.Fprint(w, `[{"number": 2, "rule": {"id": "r1"}, "tool": {"name": "t"}, "most_recent_instance": {"location": {"path": "b", "start_line": 1}}}]`)
 	})
 	c := Client{BaseURL: srv.URL, Owner: "o", Repo: "r", Token: "x", HTTPClient: srv.Client()}
-	alerts, err := c.listOpenAlerts(context.Background())
+	alerts, err := c.listAlerts(context.Background(), "open")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
