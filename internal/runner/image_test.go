@@ -591,7 +591,7 @@ func TestTagImageFilesAThirdPartyImageInItsOwnCategory(t *testing.T) {
 		t.Errorf("third-party image run category = %+v, want %s", d, sarif.ImageCategory("postgres:18.6-alpine"))
 	}
 	own := []sarif.Run{{Results: []sarif.Result{{RuleID: "CVE-1"}}}}
-	tagImage(own, sarif.OwnImageProperty, "catena-admin:ci", false)
+	tagImage(own, sarif.OwnImageProperty, "app:ci", false)
 	if own[0].AutomationDetails != nil {
 		t.Errorf("own image run category = %+v, want the default", own[0].AutomationDetails)
 	}
