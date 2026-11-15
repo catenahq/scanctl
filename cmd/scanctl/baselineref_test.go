@@ -57,6 +57,26 @@ func write(t *testing.T, root, name, body string) {
 	}
 }
 
+// commitAll stages everything and commits it, returning the new HEAD. The
+// author is fixed so a test rename lands as a rename rather than aborting on an
+// unset identity.
+func commitAll(t *testing.T, root, msg string) string {
+	t.Helper()
+	for _, args := range [][]string{
+		{"add", "-A"},
+		{"-c", "user.name=t", "-c", "user.email=t@e", "commit", "-qm", msg},
+	} {
+		if _, err := gitOut(context.Background(), root, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sha, err := gitOut(context.Background(), root, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sha
+}
+
 func pins() []config.ImagePin {
 	return []config.ImagePin{
 		{File: "catalog.go", Pattern: `c\.TraefikImage = "([^"]+)"`},
@@ -70,7 +90,7 @@ func TestScopeImagePinsKeepsOnlyTheFilesTheChangeTouches(t *testing.T) {
 	write(t, root, "roles/keycloak.yml", "keycloak_image_tag: \"26.6.6\"\n")
 
 	got := scopeImagePins(context.Background(),
-		config.Config{ImagePins: pins()}, root, sha)
+		config.Config{ImagePins: pins()}, root, root, sha, false)
 
 	if len(got.ImagePins) != 1 || got.ImagePins[0].File != "roles/keycloak.yml" {
 		t.Errorf("kept %v, want only the role default this change edited. "+
@@ -86,7 +106,7 @@ func TestScopeImagePinsSeesAnUncommittedEdit(t *testing.T) {
 	write(t, root, "catalog.go", "c.TraefikImage = \"traefik:v3.7.14\"\n")
 
 	got := scopeImagePins(context.Background(),
-		config.Config{ImagePins: pins()}, root, sha)
+		config.Config{ImagePins: pins()}, root, root, sha, false)
 
 	if len(got.ImagePins) != 1 || got.ImagePins[0].File != "catalog.go" {
 		t.Errorf("kept %v, want the uncommitted catalog.go edit", got.ImagePins)
@@ -98,7 +118,7 @@ func TestScopeImagePinsDropsThemAllWhenNoPinFileMoved(t *testing.T) {
 	write(t, root, "README.md", "docs only\n")
 
 	got := scopeImagePins(context.Background(),
-		config.Config{ImagePins: pins()}, root, sha)
+		config.Config{ImagePins: pins()}, root, root, sha, false)
 
 	if len(got.ImagePins) != 0 {
 		t.Errorf("kept %v, want none: a docs-only PR changes no image", got.ImagePins)
@@ -109,7 +129,7 @@ func TestScopeImagePinsDropsThemAllWhenNoPinFileMoved(t *testing.T) {
 func TestScopeImagePinsKeepsEveryPinWhenTheDiffFails(t *testing.T) {
 	root, _ := gitRepo(t)
 	got := scopeImagePins(context.Background(),
-		config.Config{ImagePins: pins()}, root, "not-a-sha")
+		config.Config{ImagePins: pins()}, root, root, "not-a-sha", false)
 	if len(got.ImagePins) != 2 {
 		t.Errorf("kept %v, want both: an unreadable diff must widen the scan, not narrow it", got.ImagePins)
 	}
@@ -120,36 +140,20 @@ func TestScopeImagePinsKeepsEveryPinWhenTheDiffFails(t *testing.T) {
 // file the change deleted has no image left to scan on HEAD.
 func TestScopeImagePinsNarrowsAGlobToTheChangedFiles(t *testing.T) {
 	root, _ := gitRepo(t)
-	commitAll := func(msg string) string {
-		t.Helper()
-		for _, args := range [][]string{
-			{"add", "-A"},
-			{"-c", "user.name=t", "-c", "user.email=t@e", "commit", "-qm", msg},
-		} {
-			if _, err := gitOut(context.Background(), root, args...); err != nil {
-				t.Fatal(err)
-			}
-		}
-		sha, err := gitOut(context.Background(), root, "rev-parse", "HEAD")
-		if err != nil {
-			t.Fatal(err)
-		}
-		return sha
-	}
 	write(t, root, "blueprints/a/compose.yml", "image: nginx:1.31\n")
 	write(t, root, "blueprints/b/compose.yml", "image: redis:8.10\n")
 	write(t, root, "blueprints/c/compose.yml", "image: mongo:8.3\n")
-	base := commitAll("blueprints")
+	base := commitAll(t, root, "blueprints")
 	write(t, root, "blueprints/b/compose.yml", "image: redis:8.11\n")
 	write(t, root, "blueprints/d/compose.yml", "image: valkey:9.0\n")
 	if err := os.Remove(filepath.Join(root, "blueprints/c/compose.yml")); err != nil {
 		t.Fatal(err)
 	}
-	commitAll("edit b, add d, delete c")
+	commitAll(t, root, "edit b, add d, delete c")
 
 	glob := config.ImagePin{File: "blueprints/*/compose.yml", Pattern: `image: (\S+)`}
 	got := scopeImagePins(context.Background(),
-		config.Config{ImagePins: []config.ImagePin{glob}}, root, base)
+		config.Config{ImagePins: []config.ImagePin{glob}}, root, root, base, false)
 
 	var files []string
 	for _, p := range got.ImagePins {
@@ -161,6 +165,86 @@ func TestScopeImagePinsNarrowsAGlobToTheChangedFiles(t *testing.T) {
 	if want := "blueprints/b/compose.yml,blueprints/d/compose.yml"; strings.Join(files, ",") != want {
 		t.Errorf("kept %v, want %s: the edited and added files, not the untouched or deleted ones", files, want)
 	}
+}
+
+// A renamed pin file has no file at its new path on the base branch, so the
+// base scan must resolve the pin from the path the rename came from. Otherwise
+// every finding its images already had gates as new, which is how a
+// catena-templates blueprint rename needed an admin bypass.
+func TestScopeImagePinsFollowsARenameToTheBasePath(t *testing.T) {
+	root, _ := gitRepo(t)
+	write(t, root, "blueprints/nextcloud-s3-oidc/docker-compose.yml",
+		"image: nextcloud:31.0\n")
+	base := commitAll(t, root, "pin nextcloud")
+	if err := os.MkdirAll(filepath.Join(root, "blueprints/nextcloud"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitOut(context.Background(), root, "mv",
+		"blueprints/nextcloud-s3-oidc/docker-compose.yml",
+		"blueprints/nextcloud/docker-compose.yml"); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, root, "rename blueprint")
+	baseDir := worktreeAt(t, root, base)
+
+	glob := config.ImagePin{
+		File: "blueprints/*/docker-compose.yml", Pattern: `image: (\S+)`}
+
+	head := scopeImagePins(context.Background(),
+		config.Config{ImagePins: []config.ImagePin{glob}}, root, root, base, false)
+	baseCfg := preresolveBasePins(scopeImagePins(context.Background(),
+		config.Config{ImagePins: []config.ImagePin{glob}}, root, baseDir, base, true), baseDir)
+
+	if len(head.ImagePins) != 1 || head.ImagePins[0].File != "blueprints/nextcloud/docker-compose.yml" {
+		t.Errorf("HEAD pins = %v, want the new path", head.ImagePins)
+	}
+	if len(baseCfg.Images) != 1 || baseCfg.Images[0] != "nextcloud:31.0" {
+		t.Errorf("base images = %v, want nextcloud:31.0 resolved from the old path",
+			baseCfg.Images)
+	}
+}
+
+// A rename that also bumps the image is graded on the delta: the base side
+// keeps the OLD ref, so only findings the new image adds gate.
+func TestARenamedAndBumpedPinKeepsTheOldRefOnTheBaseSide(t *testing.T) {
+	root, _ := gitRepo(t)
+	write(t, root, "blueprints/old/docker-compose.yml", "image: nextcloud:31.0\n")
+	base := commitAll(t, root, "pin nextcloud")
+	if err := os.MkdirAll(filepath.Join(root, "blueprints/new"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitOut(context.Background(), root, "mv",
+		"blueprints/old/docker-compose.yml", "blueprints/new/docker-compose.yml"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "blueprints/new/docker-compose.yml", "image: nextcloud:32.0\n")
+	commitAll(t, root, "rename and bump")
+	baseDir := worktreeAt(t, root, base)
+
+	glob := config.ImagePin{
+		File: "blueprints/*/docker-compose.yml", Pattern: `image: (\S+)`}
+
+	head := preresolveBasePins(scopeImagePins(context.Background(),
+		config.Config{ImagePins: []config.ImagePin{glob}}, root, root, base, false), root)
+	baseCfg := preresolveBasePins(scopeImagePins(context.Background(),
+		config.Config{ImagePins: []config.ImagePin{glob}}, root, baseDir, base, true), baseDir)
+
+	if len(head.Images) != 1 || head.Images[0] != "nextcloud:32.0" {
+		t.Errorf("HEAD images = %v, want the bumped ref", head.Images)
+	}
+	if len(baseCfg.Images) != 1 || baseCfg.Images[0] != "nextcloud:31.0" {
+		t.Errorf("base images = %v, want the old ref: the bump's added findings must gate",
+			baseCfg.Images)
+	}
+}
+
+func worktreeAt(t *testing.T, root, sha string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "base")
+	if _, err := gitOut(context.Background(), root, "worktree", "add", "--detach", dir, sha); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func TestPreresolveBasePinsTurnsThePinsIntoLiteralRefs(t *testing.T) {

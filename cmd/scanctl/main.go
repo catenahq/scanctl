@@ -171,7 +171,7 @@ func runCmd(args []string) int {
 		} else {
 			baseSha = sha
 			if len(cfg.ImagePins) > 0 {
-				cfg = scopeImagePins(context.Background(), cfg, root, sha)
+				cfg = scopeImagePins(context.Background(), cfg, root, root, sha, false)
 				pinsScoped = true
 				fmt.Printf("image_pins: %d pin file(s) changed since %.12s; "+
 					"the rest resolve identically on both sides and are not rescanned\n",

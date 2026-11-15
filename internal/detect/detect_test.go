@@ -32,7 +32,7 @@ func TestDetectEcosystems(t *testing.T) {
 
 func TestDetectWorkflows(t *testing.T) {
 	with := fstest.MapFS{
-		".github/workflows/ci.yml":      {Data: []byte("on: push")},
+		".github/workflows/ci.yml":       {Data: []byte("on: push")},
 		".github/workflows/release.yaml": {Data: []byte("on: push")},
 	}
 	res, err := DetectFS(with, nil)

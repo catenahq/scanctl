@@ -299,7 +299,10 @@ the branch the same way.
 Under `--baseline-ref`, only the pins whose FILE the change touches are
 scanned, on both sides. A glob pin is narrowed to the files it matches that
 the change touches, one pin per file, leaving out a file the change deleted.
-An untouched pin resolves to the same ref on both sides, so scanning it twice
+A file git detects as renamed is scoped to the path it was renamed FROM on the
+base side, so its images' existing findings stay suppressed instead of gating
+as new; a file with no rename source is judged as new. An untouched pin
+resolves to the same ref on both sides, so scanning it twice
 can only produce findings that suppress each other -- and on a repo pinning
 nine images, proving that zero is most of a run. A run without
 `--baseline-ref` keeps every pin, which is how the scheduled run gates on an

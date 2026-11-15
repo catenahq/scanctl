@@ -50,7 +50,7 @@ func baselineRefSet(ctx context.Context, root, sha, cfgPath, profile string, cfg
 	base := worktreeConfig(cfgPath, profile, root, dir, cfg)
 	// The repo's own images exist only as built from HEAD and gate whole.
 	base.OwnImages = nil
-	base = scopeImagePins(ctx, base, root, sha)
+	base = scopeImagePins(ctx, base, root, dir, sha, true)
 	base = preresolveBasePins(base, dir)
 	out, err := runner.ScanImages(ctx, dir, base, lock)
 	if err != nil {
@@ -164,35 +164,42 @@ func mergeBase(ctx context.Context, root, ref string) (string, error) {
 // change to one of many files a glob covers scans that file's images only. A
 // matched file the change deleted is left out: it has no image on HEAD.
 //
+// root is the checkout the diff runs in; statRoot is the tree a glob pin's
+// matched file must exist in, because the base worktree does not hold the
+// paths HEAD added. baseSide names each kept pin as the base branch had it, so
+// a file git detects as renamed resolves the pin from the path it was renamed
+// FROM: that path is where the merge base still carries the image whose
+// findings must suppress its new path's.
+//
 // Compared against the WORKING TREE rather than HEAD, because the working tree
 // is what the scan actually reads: an uncommitted edit to a pin file would
 // otherwise be scanned but not scoped in. Both sides of the diff are scoped
 // with the same call, so the baseline scans only what the report can match.
-func scopeImagePins(ctx context.Context, cfg config.Config, root, baseSha string) config.Config {
+func scopeImagePins(ctx context.Context, cfg config.Config, root, statRoot, baseSha string, baseSide bool) config.Config {
 	if len(cfg.ImagePins) == 0 {
 		return cfg
 	}
-	out, err := gitOut(ctx, root, "diff", "--name-only", baseSha)
+	changes, err := treeChanges(ctx, root, baseSha)
 	if err != nil {
 		// Cannot tell what moved, so scan everything rather than nothing.
 		fmt.Fprintln(os.Stderr, "warning: baseline-ref: changed-file scope:", err)
 		return cfg
 	}
-	var changed []string
-	for _, line := range strings.Split(out, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			changed = append(changed, line)
-		}
-	}
-	sort.Strings(changed)
 	var kept []config.ImagePin
 	for _, pin := range cfg.ImagePins {
-		for _, f := range changed {
+		for _, c := range changes {
+			f := c.head
+			if baseSide {
+				f = c.base
+			}
+			if f == "" {
+				continue
+			}
 			if ok, _ := path.Match(pin.File, f); !ok {
 				continue
 			}
 			if runner.IsGlob(pin.File) {
-				if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(f))); err != nil {
+				if _, err := os.Stat(filepath.Join(statRoot, filepath.FromSlash(f))); err != nil {
 					continue
 				}
 			}
@@ -201,6 +208,42 @@ func scopeImagePins(ctx context.Context, cfg config.Config, root, baseSha string
 	}
 	cfg.ImagePins = kept
 	return cfg
+}
+
+// treeChange is one file the change touches, named on both sides of the diff:
+// head is its path in the scanned working tree, base its path at baseSha. head
+// is empty for a deletion.
+type treeChange struct {
+	head, base string
+}
+
+// treeChanges lists what the change touches. Rename detection resolves a moved
+// file to the path the base branch had it at, so a renamed pin file can be
+// scanned where the merge base still carries its images. -M is passed
+// explicitly: without it git reports the move as a deletion plus an addition,
+// and the base side would see only the path that does not exist there yet.
+func treeChanges(ctx context.Context, root, baseSha string) ([]treeChange, error) {
+	out, err := gitOut(ctx, root, "diff", "-M", "--name-status", baseSha)
+	if err != nil {
+		return nil, err
+	}
+	var changes []treeChange
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 || fields[0] == "" {
+			continue
+		}
+		switch {
+		case len(fields) == 3 && strings.HasPrefix(fields[0], "R"):
+			changes = append(changes, treeChange{head: fields[2], base: fields[1]})
+		case len(fields) == 2 && strings.HasPrefix(fields[0], "D"):
+			changes = append(changes, treeChange{base: fields[1]})
+		case len(fields) == 2:
+			changes = append(changes, treeChange{head: fields[1], base: fields[1]})
+		}
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].head < changes[j].head })
+	return changes, nil
 }
 
 // preresolveBasePins turns the base branch's image_pins into literal refs and
