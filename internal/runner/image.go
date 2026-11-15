@@ -48,6 +48,14 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 		category  sarif.Category
 	}
 	var jobs []job
+	tags := map[string]map[string]bool{}
+	for _, ref := range refs {
+		repo := sarif.ImageRepo(ref)
+		if tags[repo] == nil {
+			tags[repo] = map[string]bool{}
+		}
+		tags[repo][ref] = true
+	}
 	for _, ref := range refs {
 		jobs = append(jobs, job{ref, sarif.ImageProperty,
 			sarif.Category{Tool: "trivy", ID: sarif.ImageCategory(ref)}})
@@ -85,10 +93,11 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 
 	ran := false
 	for _, j := range jobs {
-		merged, failure := scanImage(ctx, bin, ignore, j.ref, j.prop, out)
+		perTag := len(tags[sarif.ImageRepo(j.ref)]) > 1
+		merged, failure := scanImage(ctx, bin, ignore, j.ref, j.prop, perTag, out)
 		if failure != "" {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: %s: %s; retrying once", j.ref, failure))
-			merged, failure = scanImage(ctx, bin, ignore, j.ref, j.prop, out)
+			merged, failure = scanImage(ctx, bin, ignore, j.ref, j.prop, perTag, out)
 		}
 		if merged {
 			ran = true
@@ -106,7 +115,7 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 // scanImage runs one trivy image scan of ref and merges its findings, each
 // naming its image under prop. It returns whether a report merged and, when
 // the scan failed, why.
-func scanImage(ctx context.Context, bin, ignore, ref, prop string, out *Outcome) (bool, string) {
+func scanImage(ctx context.Context, bin, ignore, ref, prop string, perTag bool, out *Outcome) (bool, string) {
 	outFile, err := os.CreateTemp("", "scanctl-trivy-image-*.sarif")
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: temp file: %v", err))
@@ -128,7 +137,7 @@ func scanImage(ctx context.Context, bin, ignore, ref, prop string, out *Outcome)
 	defer out.timed("scan trivy-image "+ref, time.Now())
 	ok, failure := mergeSARIFRun("trivy", cmd, outPath, false, out)
 	if ok {
-		tagImage(out.Report.Runs[merged:], prop, ref)
+		tagImage(out.Report.Runs[merged:], prop, ref, perTag)
 	}
 	return ok, failure
 }
@@ -145,9 +154,15 @@ func scanImage(ctx context.Context, bin, ignore, ref, prop string, out *Outcome)
 // image's repository: code scanning reads a finding's security-severity from
 // its rule alone, so a CVE two images report under one rule shows one image's
 // score on both alerts. The repository, without the tag, keeps the id across a
-// bump.
-func tagImage(runs []sarif.Run, prop, ref string) {
-	id := func(rule string) string { return rule + "/" + sarif.ImageRepo(ref) }
+// bump. Tags of one repository scanned together share that category, so they
+// would share a rule per CVE; perTag then names the whole ref instead, and each
+// tag keeps its own rule and score.
+func tagImage(runs []sarif.Run, prop, ref string, perTag bool) {
+	name := sarif.ImageRepo(ref)
+	if perTag {
+		name = ref
+	}
+	id := func(rule string) string { return rule + "/" + name }
 	for i := range runs {
 		if prop == sarif.ImageProperty {
 			runs[i].AutomationDetails = &sarif.AutomationDetails{ID: sarif.ImageCategory(ref)}
