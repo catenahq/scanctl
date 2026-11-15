@@ -317,7 +317,7 @@ func TestTagImageNamesTheImageOnEveryResultAndRule(t *testing.T) {
 				{RuleID: "CVE-2", Properties: map[string]any{"k": "v"}},
 			},
 		}}
-		tagImage(runs, sarif.ImageProperty, ref)
+		tagImage(runs, sarif.ImageProperty, ref, false)
 		return runs[0]
 	}
 	run := tag("postgres:18.6-alpine")
@@ -395,6 +395,35 @@ func scanAndWrite(t *testing.T, cfg config.Config) (*Outcome, *sarif.Report) {
 		t.Fatal(err)
 	}
 	return out, written
+}
+
+// Two tags of one image pinned together share a category, so each tag's CVE
+// gets its own rule and its alert shows its own scan's score.
+func TestTwoTagsOfOneImageShowTheirOwnScores(t *testing.T) {
+	fakeTrivy(t, map[string]string{
+		"postgres:16.1": trivyReport("CVE-2026-1", "9.8"),
+		"postgres:18.6": trivyReport("CVE-2026-1", "5.3"),
+	})
+	_, written := scanAndWrite(t, config.Config{Images: []string{"postgres:16.1", "postgres:18.6"}})
+
+	want := map[string]string{"postgres:16.1": "9.8", "postgres:18.6": "5.3"}
+	seen := map[string]bool{}
+	for _, run := range written.Runs {
+		if !sarif.IsImageCategory(run.Category().ID) {
+			continue
+		}
+		rules := run.RulesByID()
+		for _, r := range run.Results {
+			ref, _ := r.Properties[sarif.ImageProperty].(string)
+			if got := rules[r.RuleID].Properties["security-severity"]; got != want[ref] {
+				t.Errorf("%s: alert %s scores %v, want %s", ref, r.RuleID, got, want[ref])
+			}
+			seen[ref] = true
+		}
+	}
+	if len(seen) != 2 {
+		t.Errorf("written image results cover %v, want both tags", seen)
+	}
 }
 
 // Code scanning reads security-severity from the rule alone. Two images
@@ -557,12 +586,12 @@ func fakeTrivyFailsTheFsScan(t *testing.T, reports map[string]string) {
 // image is clean; an own image's stays in the default one, with the fs scan.
 func TestTagImageFilesAThirdPartyImageInItsOwnCategory(t *testing.T) {
 	third := []sarif.Run{{}}
-	tagImage(third, sarif.ImageProperty, "postgres:18.6-alpine")
+	tagImage(third, sarif.ImageProperty, "postgres:18.6-alpine", false)
 	if d := third[0].AutomationDetails; d == nil || d.ID != sarif.ImageCategory("postgres:18.6-alpine") {
 		t.Errorf("third-party image run category = %+v, want %s", d, sarif.ImageCategory("postgres:18.6-alpine"))
 	}
 	own := []sarif.Run{{Results: []sarif.Result{{RuleID: "CVE-1"}}}}
-	tagImage(own, sarif.OwnImageProperty, "catena-admin:ci")
+	tagImage(own, sarif.OwnImageProperty, "app:ci", false)
 	if own[0].AutomationDetails != nil {
 		t.Errorf("own image run category = %+v, want the default", own[0].AutomationDetails)
 	}
