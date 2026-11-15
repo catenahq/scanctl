@@ -68,7 +68,7 @@ on:
       runner:
         description: runs-on label
         type: string
-        default: ubuntu-latest
+        default: ubuntu-26.04
       pre-scan:
         description: shell commands run in the checkout before the scan, e.g. the docker build of an image passed in own-images
         type: string

@@ -24,7 +24,7 @@ jobs:
     # Reuses the result of an earlier run on the same tree; every job below
     # needs it.
     name: same tree (ci)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       actions: read
@@ -40,7 +40,7 @@ jobs:
     name: build + vet + test
     needs: same-tree
     if: needs.same-tree.outputs.run != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -59,7 +59,7 @@ jobs:
     name: Repo rules
     needs: same-tree
     if: needs.same-tree.outputs.run != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -78,7 +78,7 @@ jobs:
     name: scanctl scans scanctl (dogfood)
     needs: same-tree
     if: needs.same-tree.outputs.run != 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       security-events: write

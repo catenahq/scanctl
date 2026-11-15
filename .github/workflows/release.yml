@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   binaries:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write # create the GitHub Release + upload the binaries
     steps:
@@ -41,7 +41,7 @@ jobs:
         run: gh release create "$TAG" dist/scanctl_linux_* --verify-tag --generate-notes
 
   image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write # push the image to GHCR
