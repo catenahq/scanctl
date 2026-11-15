@@ -29,7 +29,12 @@ type Outcome struct {
 	Failed map[string]string
 	// Incomplete names each tool and category a scan of which produced no
 	// report, whatever the tool's mode. Written, its run would close the alerts
-	// of everything that scan did not cover, so the SARIF leaves it out.
+	// of everything that scan did not cover, so the SARIF leaves it out. A
+	// third-party image has a category of its own, so only that image's run is
+	// left out: the other images' alerts still update, and the unscanned
+	// image's alerts stay as they were. The trivy default category is shared by
+	// the fs scan and the repo's own images, so a failed one of those leaves the
+	// whole category out.
 	Incomplete map[sarif.Category]bool
 	// Timings is how long each fetch and scan took, in the order they ran.
 	Timings []Timing
@@ -61,6 +66,18 @@ func (o *Outcome) failedScan(cfg config.Config, category sarif.Category, key, re
 	if cfg.Tools[category.Tool].Mode == config.ModeBlock {
 		o.Failed[key] = reason
 	}
+}
+
+// ImagesIncomplete reports whether any third-party image scan produced no
+// report. A run that did not scan every image cannot judge an image baseline
+// entry stale.
+func (o *Outcome) ImagesIncomplete() bool {
+	for c := range o.Incomplete {
+		if sarif.IsImageCategory(c.ID) {
+			return true
+		}
+	}
+	return false
 }
 
 // Run detects, fetches, and executes the enabled+applicable tools, returning a

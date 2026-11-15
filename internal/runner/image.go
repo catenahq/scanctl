@@ -16,13 +16,10 @@ import (
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
-// ThirdPartyImages is the in-memory tool and category of the third-party image
-// scans; the written report names that run sarif.ImageTool. The repo's own
-// images join trivy's fs scan in the default category.
-var (
-	ThirdPartyImages = sarif.Category{Tool: "trivy", ID: sarif.ImageCategory}
-	ownImages        = sarif.Category{Tool: "trivy"}
-)
+// ownImages is the in-memory category of an image the repo builds: its runs
+// join trivy's fs scan in the default category. A third-party image gets a
+// category of its own (see job.category).
+var ownImages = sarif.Category{Tool: "trivy"}
 
 // imageStep scans each container image ref in cfg.Images -- plus every ref
 // resolved out of cfg.ImagePins, and each of cfg.OwnImages -- with trivy,
@@ -30,12 +27,13 @@ var (
 // none is configured (only repos that ship, build or pin images set them).
 // Findings are tagged driver "trivy" so they gate under trivy's mode, while
 // the step is recorded as "trivy-image" in out.Ran for visibility; the written
-// report uploads the third-party runs as tool sarif.ImageTool. Each
-// finding records its image under ImageProperty, or OwnImageProperty for an
-// image the repo builds. A ref whose scan fails is retried once (registry
-// pulls fail transiently), then recorded in out.Failed and in out.Incomplete
-// under its category. ignore is the trivy ignore file passed to every scan, or ""
-// for none.
+// report uploads each third-party image's run under tool sarif.ImageTool in
+// that image's own category, so a scan of one image never closes another's
+// alerts. Each finding records its image under ImageProperty, or
+// OwnImageProperty for an image the repo builds. A ref whose scan fails is
+// retried once (registry pulls fail transiently), then recorded in out.Failed
+// and in out.Incomplete under its category. ignore is the trivy ignore file
+// passed to every scan, or "" for none.
 //
 // The returned error is reserved for a pin that resolves to nothing, which is
 // a defect in scanctl.yml rather than a scan that went wrong: an unresolvable
@@ -51,7 +49,8 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 	}
 	var jobs []job
 	for _, ref := range refs {
-		jobs = append(jobs, job{ref, sarif.ImageProperty, ThirdPartyImages})
+		jobs = append(jobs, job{ref, sarif.ImageProperty,
+			sarif.Category{Tool: "trivy", ID: sarif.ImageCategory(ref)}})
 	}
 	for _, ref := range cfg.OwnImages {
 		jobs = append(jobs, job{ref, sarif.OwnImageProperty, ownImages})
@@ -138,9 +137,9 @@ func scanImage(ctx context.Context, bin, ignore, ref, prop string, out *Outcome)
 // trivy's location is a path inside the image, which neither names the image
 // nor stays put across a bump (a jar is named for its version), so this
 // property is what matches a finding to the same image on both sides of a
-// diff. A third-party image's runs go in sarif.ImageCategory (uploaded as tool
-// sarif.ImageTool), a clean one's too, so a run that scanned every image
-// closes each image alert its scans do not report.
+// diff. A third-party image's runs go in its own sarif.ImageCategory (uploaded
+// as tool sarif.ImageTool), a clean one's too, so a scan of one image closes
+// only that image's alerts when they are gone.
 //
 // Every rule id, on the rules and the results alike, gains "/" and the
 // image's repository: code scanning reads a finding's security-severity from
@@ -151,7 +150,7 @@ func tagImage(runs []sarif.Run, prop, ref string) {
 	id := func(rule string) string { return rule + "/" + sarif.ImageRepo(ref) }
 	for i := range runs {
 		if prop == sarif.ImageProperty {
-			runs[i].AutomationDetails = &sarif.AutomationDetails{ID: sarif.ImageCategory}
+			runs[i].AutomationDetails = &sarif.AutomationDetails{ID: sarif.ImageCategory(ref)}
 		}
 		rules := runs[i].Tool.Driver.Rules
 		for j := range rules {

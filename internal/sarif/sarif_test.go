@@ -9,7 +9,7 @@ import (
 )
 
 func TestUploadToolNamesTheImageCategory(t *testing.T) {
-	image := Run{Tool: Tool{Driver: Driver{Name: "trivy"}}, AutomationDetails: &AutomationDetails{ID: ImageCategory}}
+	image := Run{Tool: Tool{Driver: Driver{Name: "trivy"}}, AutomationDetails: &AutomationDetails{ID: ImageCategory("redis:8.10.1")}}
 	if got := image.UploadTool(); got != ImageTool {
 		t.Errorf("image run uploads as %q, want %q", got, ImageTool)
 	}
@@ -18,6 +18,28 @@ func TestUploadToolNamesTheImageCategory(t *testing.T) {
 		if got := run.UploadTool(); got != "trivy" {
 			t.Errorf("run in %+v uploads as %q, want trivy", run.AutomationDetails, got)
 		}
+	}
+}
+
+// ImageCategory names the category after the image's repository, so a tag bump
+// keeps it, and ends in a slash so code scanning reads the whole string as the
+// category rather than a run id.
+func TestImageCategoryKeepsTheRepositoryAndNoTag(t *testing.T) {
+	for ref, want := range map[string]string{
+		"redis:8.10.1": "images/redis/",
+		"quay.io/phasetwo/phasetwo-keycloak:26.0": "images/quay.io/phasetwo/phasetwo-keycloak/",
+		"ghcr.io/org/app@sha256:abc":              "images/ghcr.io/org/app/",
+		"localhost:5000/app:1":                    "images/localhost:5000/app/",
+	} {
+		if got := ImageCategory(ref); got != want {
+			t.Errorf("ImageCategory(%q) = %q, want %q", ref, got, want)
+		}
+		if !IsImageCategory(ImageCategory(ref)) {
+			t.Errorf("IsImageCategory(%q) = false", ImageCategory(ref))
+		}
+	}
+	if IsImageCategory("") || IsImageCategory("coding") {
+		t.Error("a category that is not an image category was accepted")
 	}
 }
 
@@ -336,28 +358,47 @@ func TestOneRunPerCategoryJoinsTheRunsOfATool(t *testing.T) {
 	}
 }
 
-// The third-party image scans join a trivy run of their own, in ImageCategory,
-// a clean image's empty run included; the fs scan keeps the upload's default
-// category.
-func TestOneRunPerCategoryFilesTheImageScansApart(t *testing.T) {
-	image := func(n int) Run {
+// Each third-party image keeps a trivy run of its own, in its own category, a
+// clean image's empty run included; the fs scan keeps the upload's default
+// category, and two scans of one image join.
+func TestOneRunPerCategoryFilesEachImageApart(t *testing.T) {
+	image := func(ref string, n int) Run {
 		r := run("trivy", n)
-		r.AutomationDetails = &AutomationDetails{ID: ImageCategory}
+		r.AutomationDetails = &AutomationDetails{ID: ImageCategory(ref)}
 		return r
 	}
 	rep := New()
-	rep.Merge(&Report{Runs: []Run{run("trivy", 1), image(2), run("gosec", 1), image(0), run("trivy", 1)}})
+	rep.Merge(&Report{Runs: []Run{
+		run("trivy", 1),
+		image("redis:8.10.1", 2),
+		run("gosec", 1),
+		image("postgres:18.6", 0),
+		image("redis:8.10.1", 1),
+		run("trivy", 1),
+	}})
 
 	got := rep.OneRunPerCategory()
-	if len(got.Runs) != 3 {
-		t.Fatalf("runs = %+v, want trivy, trivy in %s, gosec", got.Runs, ImageCategory)
+	if len(got.Runs) != 4 {
+		t.Fatalf("runs = %+v, want trivy, two image categories and gosec", got.Runs)
 	}
-	fs, images := got.Runs[0], got.Runs[1]
+	fs, redis, gosec, postgres := got.Runs[0], got.Runs[1], got.Runs[2], got.Runs[3]
 	if fs.Tool.Driver.Name != "trivy" || fs.AutomationDetails != nil || len(fs.Results) != 2 {
 		t.Errorf("fs run = %+v, want trivy's 2 fs findings in the default category", fs)
 	}
-	if images.Tool.Driver.Name != "trivy" || images.AutomationDetails == nil ||
-		images.AutomationDetails.ID != ImageCategory || len(images.Results) != 2 {
-		t.Errorf("image run = %+v, want trivy's 2 image findings in %s", images, ImageCategory)
+	for _, tc := range []struct {
+		run      Run
+		category string
+		results  int
+	}{
+		{redis, "images/redis/", 3},
+		{postgres, "images/postgres/", 0},
+	} {
+		if tc.run.Tool.Driver.Name != "trivy" || tc.run.AutomationDetails == nil ||
+			tc.run.AutomationDetails.ID != tc.category || len(tc.run.Results) != tc.results {
+			t.Errorf("image run = %+v, want %d findings in %s", tc.run, tc.results, tc.category)
+		}
+	}
+	if gosec.Tool.Driver.Name != "gosec" || len(gosec.Results) != 1 {
+		t.Errorf("gosec run = %+v, want its 1 finding", gosec)
 	}
 }

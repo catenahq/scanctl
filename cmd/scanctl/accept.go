@@ -81,11 +81,15 @@ func acceptImages(existing, in *sarif.Report, cfg config.Config, until string, n
 	// reported holds every image finding the input carries, selected or not: an
 	// entry whose finding is still reported is not removed.
 	reported := map[string]bool{}
-	imagesWhole := false
+	// scanned names each image category the input holds a run for. An entry is
+	// removed only when the run scanned that image and no longer reports the
+	// finding: a push run that scanned one pin's image leaves the other images'
+	// entries alone.
+	scanned := map[string]bool{}
 	for _, run := range in.Runs {
 		tool := run.Tool.Driver.Name
-		if run.Category().ID == sarif.ImageCategory {
-			imagesWhole = true
+		if id := run.Category().ID; sarif.IsImageCategory(id) {
+			scanned[id] = true
 		}
 		rules := run.RulesByID()
 		for _, r := range run.Results {
@@ -121,6 +125,7 @@ func acceptImages(existing, in *sarif.Report, cfg config.Config, until string, n
 			}
 			stripped = true
 			fp := sarif.Fingerprint(tool, r)
+			img, _ := r.Properties[sarif.ImageProperty].(string)
 			switch {
 			case have[fp] > 0:
 				have[fp]--
@@ -132,7 +137,7 @@ func acceptImages(existing, in *sarif.Report, cfg config.Config, until string, n
 					counts.kept++
 				}
 				images = append(images, r)
-			case !imagesWhole || reported[fp]:
+			case !scanned[sarif.ImageCategory(img)] || reported[fp]:
 				counts.kept++
 				images = append(images, r)
 			default:

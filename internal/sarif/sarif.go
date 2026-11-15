@@ -182,25 +182,37 @@ const ImageProperty = "image"
 // base-commit scan suppresses them.
 const OwnImageProperty = "ownImage"
 
-// ImageCategory is the code-scanning category of the third-party image scans.
+// ImageCategoryPrefix prefixes the code-scanning category of a third-party
+// image's scans.
+const ImageCategoryPrefix = "images/"
+
+// ImageCategory names the code-scanning category of one third-party image's
+// scans: "images/<repository>/", the trailing slash making the whole string the
+// category (code scanning reads automationDetails.id as "category/run-id").
 // An analysis of a tool and category closes every alert of that tool and
 // category it does not report, and leaves the alerts of a category it does not
-// carry as they were. Filed apart from the trivy fs scan, the image findings can be left
-// out of a run that did not scan every image (report.WriteSARIF) without
-// closing the alerts of the images it skipped.
-const ImageCategory = "images/"
+// carry as they were. One category per image, so a scan of one image closes
+// only that image's alerts and a failed scan of another leaves them alone.
+// The repository, not the ref, keeps the category across a tag bump.
+func ImageCategory(ref string) string {
+	return ImageCategoryPrefix + ImageRepo(ref) + "/"
+}
 
-// ImageTool is the tool name a written report gives the runs in ImageCategory.
-// Code scanning compares a pull request's upload with its base tool by tool,
-// and a pull request's run leaves ImageCategory out, so under a tool of their
-// own the image findings leave trivy's comparison whole. In memory those runs
-// keep the driver "trivy".
+// IsImageCategory reports whether id is a third-party image category.
+func IsImageCategory(id string) bool {
+	return strings.HasPrefix(id, ImageCategoryPrefix)
+}
+
+// ImageTool is the tool name a written report gives the runs in an image
+// category. Code scanning compares a pull request's upload with its base tool
+// by tool, and under a tool of their own the image findings leave trivy's
+// comparison whole. In memory those runs keep the driver "trivy".
 const ImageTool = "trivy-image"
 
 // UploadTool returns the tool name the run is uploaded under: ImageTool for a
-// run in ImageCategory, the driver name otherwise.
+// run in an image category, the driver name otherwise.
 func (r Run) UploadTool() string {
-	if r.AutomationDetails != nil && r.AutomationDetails.ID == ImageCategory {
+	if r.AutomationDetails != nil && IsImageCategory(r.AutomationDetails.ID) {
 		return ImageTool
 	}
 	return r.Tool.Driver.Name
@@ -376,13 +388,13 @@ func (dst *Report) Merge(src *Report) {
 
 // OneRunPerCategory returns a copy of r holding one run per tool and category,
 // in the order each first appears: trivy's fs scan and own-image scans join
-// one trivy run, and the third-party image scans a second one, in
-// ImageCategory. That is the shape code scanning takes whatever the number of
-// images a scan covers: codeql-action upload-sarif refuses a file holding two
-// runs of one tool and automationDetails.id, and code scanning rejects a file
-// of more than 20 runs. A rule id several runs share keeps the first run's
-// rule; an image scan's rule ids name its image, so each image keeps its own
-// rule. The runs of r stay as they are.
+// one trivy run, and each third-party image keeps its own, in its
+// ImageCategory. That is the shape code scanning takes: codeql-action
+// upload-sarif refuses a file holding two runs of one tool and
+// automationDetails.id, and code scanning rejects a file of more than 20 runs,
+// so report.WriteUploadSet splits the runs across files. A rule id several runs
+// share keeps the first run's rule; an image scan's rule ids name its image, so
+// each image keeps its own rule. The runs of r stay as they are.
 func (r *Report) OneRunPerCategory() *Report {
 	out := &Report{Schema: r.Schema, Version: r.Version, Runs: []Run{}}
 	index := map[Category]int{}

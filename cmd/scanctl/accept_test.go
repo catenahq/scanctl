@@ -126,9 +126,26 @@ func TestAcceptDropsAnImageEntryTheInputNoLongerReportsWhenItHoldsAnImageRun(t *
 	accept(t, "2999-01-01", bl, writeReport(t, "a.sarif", trivyRun("",
 		imageResult("CVE-1", "postgres:18", "2", "8.0"))))
 
-	got := entries(accept(t, "2999-01-01", bl, writeReport(t, "b.sarif", trivyRun(sarif.ImageCategory))))
+	got := entries(accept(t, "2999-01-01", bl, writeReport(t, "b.sarif", trivyRun(sarif.ImageCategory("postgres:18")))))
 	if len(got) != 0 {
 		t.Errorf("entries = %v, want CVE-1/postgres dropped", got)
+	}
+}
+
+// An entry is removed only when the input scanned that image; a push run that
+// scanned one pin's image leaves the other images' entries alone.
+func TestAcceptKeepsAnImageEntryNoRunScanned(t *testing.T) {
+	bl := filepath.Join(t.TempDir(), "baseline.sarif")
+	accept(t, "2999-01-01", bl, writeReport(t, "a.sarif", trivyRun("",
+		imageResult("CVE-1", "postgres:18", "2", "8.0"),
+		imageResult("CVE-2", "redis:7", "2", "8.0"))))
+
+	got := entries(accept(t, "2999-01-01", bl, writeReport(t, "b.sarif", trivyRun(sarif.ImageCategory("postgres:18")))))
+	if _, ok := got["CVE-1/postgres"]; ok {
+		t.Errorf("entries = %v, want CVE-1/postgres dropped: its image was scanned and no longer reports it", got)
+	}
+	if untilOf(got["CVE-2/redis"]) != "2999-01-01" {
+		t.Errorf("entries = %v, want CVE-2/redis kept: no run scanned redis", got)
 	}
 }
 
@@ -149,7 +166,7 @@ func TestAcceptKeepsAnEntryWhoseFindingIsReportedButDoesNotGate(t *testing.T) {
 		imageResult("CVE-1", "postgres:18", "2", "8.0"),
 		imageResult("CVE-2", "redis:7", "2", "8.0"))))
 
-	got := entries(accept(t, "2999-01-01", bl, writeReport(t, "b.sarif", trivyRun(sarif.ImageCategory,
+	got := entries(accept(t, "2999-01-01", bl, writeReport(t, "b.sarif", trivyRun(sarif.ImageCategory("postgres:18"),
 		imageResult("CVE-1", "postgres:18", "2", "5.0"),
 		imageResult("CVE-2", "redis:7", "", "8.0")))))
 	for _, rule := range []string{"CVE-1/postgres", "CVE-2/redis"} {
@@ -164,7 +181,7 @@ func TestAcceptLeavesATreeEntryAlone(t *testing.T) {
 		Tool:    sarif.Tool{Driver: sarif.Driver{Name: "gosec"}},
 		Results: []sarif.Result{{RuleID: "G304", Message: sarif.Message{Text: "m"}}},
 	})
-	got := entries(accept(t, "2999-01-01", bl, writeReport(t, "b.sarif", trivyRun(sarif.ImageCategory))))
+	got := entries(accept(t, "2999-01-01", bl, writeReport(t, "b.sarif", trivyRun(sarif.ImageCategory("postgres:18")))))
 	if _, ok := got["G304"]; !ok {
 		t.Errorf("entries = %v, want the tree entry kept", got)
 	}

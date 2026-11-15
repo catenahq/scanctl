@@ -398,8 +398,9 @@ func scanAndWrite(t *testing.T, cfg config.Config) (*Outcome, *sarif.Report) {
 }
 
 // Code scanning reads security-severity from the rule alone. Two images
-// reporting one CVE at different scores write a rule each, so each alert shows
-// the score its own image's scan reported, and the gate grades each the same.
+// reporting one CVE at different scores write a rule each, in their own
+// category, so each alert shows the score its own image's scan reported, and
+// the gate grades each the same.
 func TestAnImageAlertShowsItsOwnImagesScore(t *testing.T) {
 	fakeTrivy(t, map[string]string{
 		"redis:8.10.1":  trivyReport("CVE-2026-1", "9.8"),
@@ -408,21 +409,22 @@ func TestAnImageAlertShowsItsOwnImagesScore(t *testing.T) {
 	out, written := scanAndWrite(t, config.Config{Images: []string{"redis:8.10.1", "postgres:18.6"}})
 
 	want := map[string]string{"redis:8.10.1": "9.8", "postgres:18.6": "5.3"}
-	var images *sarif.Run
-	for i, run := range written.Runs {
-		if run.Category() == ThirdPartyImages {
-			images = &written.Runs[i]
+	seen := map[string]bool{}
+	for _, run := range written.Runs {
+		if !sarif.IsImageCategory(run.Category().ID) {
+			continue
+		}
+		rules := run.RulesByID()
+		for _, r := range run.Results {
+			ref, _ := r.Properties[sarif.ImageProperty].(string)
+			if got := rules[r.RuleID].Properties["security-severity"]; got != want[ref] {
+				t.Errorf("%s: alert %s scores %v, want %s as its scan reported", ref, r.RuleID, got, want[ref])
+			}
+			seen[ref] = true
 		}
 	}
-	if images == nil || len(images.Results) != 2 || len(images.Tool.Driver.Rules) != 2 {
-		t.Fatalf("written image run = %+v, want 2 findings under 2 rules", images)
-	}
-	rules := images.RulesByID()
-	for _, r := range images.Results {
-		ref, _ := r.Properties[sarif.ImageProperty].(string)
-		if got := rules[r.RuleID].Properties["security-severity"]; got != want[ref] {
-			t.Errorf("%s: alert %s scores %v, want %s as its scan reported", ref, r.RuleID, got, want[ref])
-		}
+	if len(seen) != 2 {
+		t.Errorf("written image runs cover %v, want each image in its own category", seen)
 	}
 
 	grade := map[string]config.Severity{"redis:8.10.1": config.SevCritical, "postgres:18.6": config.SevMedium}
@@ -436,8 +438,8 @@ func TestAnImageAlertShowsItsOwnImagesScore(t *testing.T) {
 	}
 }
 
-// An image whose scan fails after its retry leaves its category out of the
-// SARIF: uploaded, the category's run would close that image's alerts. The
+// An image whose scan fails after its retry leaves that image's category out
+// of the SARIF: uploaded, the category's run would close its alerts. Every
 // other category is written, and the report keeps every finding for the
 // summary and the gate.
 func TestAFailedImageScanLeavesItsCategoryOut(t *testing.T) {
@@ -446,19 +448,35 @@ func TestAFailedImageScanLeavesItsCategoryOut(t *testing.T) {
 		"app:ci":       trivyReport("CVE-2026-2", "7.5"),
 	})
 	for name, tc := range map[string]struct {
-		cfg    config.Config
-		failed string
-		want   sarif.Category
+		cfg     config.Config
+		failed  string
+		absent  sarif.Category
+		present []sarif.Category
 	}{
-		"third-party": {config.Config{Images: []string{"redis:8.10.1", "gone:1"}, OwnImages: []string{"app:ci"}},
-			"gone:1", ownImages},
-		"own": {config.Config{Images: []string{"redis:8.10.1"}, OwnImages: []string{"app:ci", "gone:ci"}},
-			"gone:ci", ThirdPartyImages},
+		"third-party": {
+			config.Config{Images: []string{"redis:8.10.1", "gone:1"}, OwnImages: []string{"app:ci"}},
+			"gone:1",
+			sarif.Category{Tool: "trivy", ID: sarif.ImageCategory("gone:1")},
+			[]sarif.Category{{Tool: "trivy"}, {Tool: "trivy", ID: sarif.ImageCategory("redis:8.10.1")}}},
+		"own": {
+			config.Config{Images: []string{"redis:8.10.1"}, OwnImages: []string{"app:ci", "gone:ci"}},
+			"gone:ci",
+			sarif.Category{Tool: "trivy"},
+			[]sarif.Category{{Tool: "trivy", ID: sarif.ImageCategory("redis:8.10.1")}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			out, written := scanAndWrite(t, tc.cfg)
-			if len(written.Runs) != 1 || written.Runs[0].Category() != tc.want {
-				t.Errorf("written runs = %+v, want the %v run alone", written.Runs, tc.want)
+			got := map[sarif.Category]bool{}
+			for _, run := range written.Runs {
+				got[run.Category()] = true
+			}
+			if got[tc.absent] {
+				t.Errorf("written runs include %v, want it left out", tc.absent)
+			}
+			for _, c := range tc.present {
+				if !got[c] {
+					t.Errorf("written runs = %v, want %v", got, c)
+				}
 			}
 			if out.Failed[tc.failed] == "" {
 				t.Errorf("Failed = %v, want %s listed", out.Failed, tc.failed)
@@ -535,13 +553,13 @@ func fakeTrivyFailsTheFsScan(t *testing.T, reports map[string]string) {
 	}}
 }
 
-// A third-party image's run goes in the image category even when the image is
-// clean; an own image's stays in the default one, with the fs scan.
-func TestTagImageFilesAThirdPartyImageInTheImageCategory(t *testing.T) {
+// A third-party image's run goes in that image's own category even when the
+// image is clean; an own image's stays in the default one, with the fs scan.
+func TestTagImageFilesAThirdPartyImageInItsOwnCategory(t *testing.T) {
 	third := []sarif.Run{{}}
 	tagImage(third, sarif.ImageProperty, "postgres:18.6-alpine")
-	if d := third[0].AutomationDetails; d == nil || d.ID != sarif.ImageCategory {
-		t.Errorf("third-party image run category = %+v, want %s", d, sarif.ImageCategory)
+	if d := third[0].AutomationDetails; d == nil || d.ID != sarif.ImageCategory("postgres:18.6-alpine") {
+		t.Errorf("third-party image run category = %+v, want %s", d, sarif.ImageCategory("postgres:18.6-alpine"))
 	}
 	own := []sarif.Run{{Results: []sarif.Result{{RuleID: "CVE-1"}}}}
 	tagImage(own, sarif.OwnImageProperty, "catena-admin:ci")

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -21,16 +22,16 @@ import (
 // (the most severe); it rejects a file with a run of more than 25,000.
 const maxUploadResults = 5000
 
-// WriteSARIF marshals rep to path with indentation, one run per tool and
-// category (the shape code scanning uploads, see
-// sarif.Report.OneRunPerCategory), after normalizing it so the output is
-// schema-valid (no null results arrays). leaveOut names the categories whose
-// run is left out: a category the run did not scan whole, whose upload would
-// close the alerts of what it skipped. An upload without a category leaves its
-// alerts as they were. A written run holds at most maxUploadResults results,
-// the most severe, and is named by Run.UploadTool. rep keeps every finding for
-// the summary and the gate.
-func WriteSARIF(rep *sarif.Report, path string, leaveOut map[sarif.Category]bool) error {
+// MaxRunsPerFile is the most runs code scanning accepts in one SARIF file; it
+// rejects the file beyond that.
+const MaxRunsPerFile = 20
+
+// uploadReport returns the report code scanning takes from rep: one run per
+// tool and category, named by Run.UploadTool, each cut to maxUploadResults
+// results, without the categories in leaveOut (a category the run did not scan
+// whole, whose upload would close the alerts of what it skipped). rep is
+// normalized; its own runs and findings stay as they were.
+func uploadReport(rep *sarif.Report, leaveOut map[sarif.Category]bool) *sarif.Report {
 	rep.Normalize()
 	written := rep.OneRunPerCategory()
 	written.Runs = slices.DeleteFunc(written.Runs, func(run sarif.Run) bool {
@@ -41,6 +42,22 @@ func WriteSARIF(rep *sarif.Report, path string, leaveOut map[sarif.Category]bool
 		trimToMostSevere(run, maxUploadResults)
 		run.Tool.Driver.Name = run.UploadTool()
 	}
+	return written
+}
+
+// WriteSARIF marshals rep to path with indentation, one run per tool and
+// category (the shape code scanning uploads, see
+// sarif.Report.OneRunPerCategory), after normalizing it so the output is
+// schema-valid (no null results arrays). leaveOut names the categories whose
+// run is left out: a category the run did not scan whole, whose upload would
+// close the alerts of what it skipped. An upload without a category leaves its
+// alerts as they were. A written run holds at most maxUploadResults results,
+// the most severe, and is named by Run.UploadTool. rep keeps every finding for
+// the summary and the gate. One image now has a category of its own, so a
+// report of more than MaxRunsPerFile runs needs WriteUploadSet instead: code
+// scanning rejects a single file that big.
+func WriteSARIF(rep *sarif.Report, path string, leaveOut map[sarif.Category]bool) error {
+	written := uploadReport(rep, leaveOut)
 	data, err := json.MarshalIndent(written, "", "  ")
 	if err != nil {
 		return err
@@ -48,6 +65,53 @@ func WriteSARIF(rep *sarif.Report, path string, leaveOut map[sarif.Category]bool
 	// #nosec G306 -- a SARIF report is non-sensitive output meant to be read by
 	// CI steps and humans; 0644 is intentional
 	return os.WriteFile(path, data, 0o644)
+}
+
+// WriteUploadSet writes rep into dir as the SARIF files code scanning uploads:
+// the same runs WriteSARIF writes, grouped into files of at most
+// MaxRunsPerFile runs (code scanning rejects a file holding more) with one run
+// per tool and category, each file a complete SARIF document. The directory is
+// the sarif_file a github/codeql-action/upload-sarif call takes. A SARIF file
+// an earlier call wrote in dir is removed first, so a category this run no
+// longer carries stops uploading. It returns how many files it wrote.
+func WriteUploadSet(rep *sarif.Report, dir string, leaveOut map[sarif.Category]bool) (int, error) {
+	written := uploadReport(rep, leaveOut)
+	// #nosec G301 -- the directory is non-sensitive output meant to be read by
+	// CI steps
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return 0, err
+	}
+	old, err := filepath.Glob(filepath.Join(dir, "*.sarif"))
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range old {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return 0, err
+		}
+	}
+	chunks := (len(written.Runs) + MaxRunsPerFile - 1) / MaxRunsPerFile
+	if chunks == 0 {
+		chunks = 1
+	}
+	for i := 0; i < chunks; i++ {
+		start := i * MaxRunsPerFile
+		end := start + MaxRunsPerFile
+		if end > len(written.Runs) {
+			end = len(written.Runs)
+		}
+		chunk := &sarif.Report{Schema: written.Schema, Version: written.Version, Runs: written.Runs[start:end]}
+		data, err := json.MarshalIndent(chunk, "", "  ")
+		if err != nil {
+			return i, err
+		}
+		// #nosec G306 -- a SARIF report is non-sensitive output meant to be read
+		// by CI steps and humans
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%03d.sarif", i+1)), data, 0o644); err != nil {
+			return i, err
+		}
+	}
+	return chunks, nil
 }
 
 // trimToMostSevere cuts run to its limit most severe results (ties go to the
