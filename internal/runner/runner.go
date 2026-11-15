@@ -27,9 +27,9 @@ type Outcome struct {
 	// report (tool, or image ref -> reason). A gate that passes without them
 	// would pass on findings nobody looked for, so the run fails on them.
 	Failed map[string]string
-	// Incomplete names each tool and category an image scan of which produced
-	// no report, whatever the tool's mode. Written, its run would close the
-	// alerts of the image that went unscanned, so the SARIF leaves it out.
+	// Incomplete names each tool and category a scan of which produced no
+	// report, whatever the tool's mode. Written, its run would close the alerts
+	// of everything that scan did not cover, so the SARIF leaves it out.
 	Incomplete map[sarif.Category]bool
 	// Timings is how long each fetch and scan took, in the order they ran.
 	Timings []Timing
@@ -52,10 +52,13 @@ func (o *Outcome) timed(step string, start time.Time) {
 	o.Timings = append(o.Timings, Timing{Step: step, Duration: time.Since(start)})
 }
 
-// fail records that the scan named key produced no report. It fails the run
-// only when tool's findings would block; a report-mode scan stays a warning.
-func (o *Outcome) fail(cfg config.Config, tool, key, reason string) {
-	if cfg.Tools[tool].Mode == config.ModeBlock {
+// failedScan records that the scan named key, whose findings belong in
+// category, produced no report. The category is left out of the written SARIF,
+// because the scans that did report into it cover only part of it. It fails the
+// run only when its findings would block; a report-mode scan stays a warning.
+func (o *Outcome) failedScan(cfg config.Config, category sarif.Category, key, reason string) {
+	o.Incomplete[category] = true
+	if cfg.Tools[category.Tool].Mode == config.ModeBlock {
 		o.Failed[key] = reason
 	}
 }
@@ -89,7 +92,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 		if err != nil {
 			out.Warnings = append(out.Warnings, err.Error())
 			out.Skipped[td.name] = "unpinned"
-			out.fail(cfg, td.name, td.name, "unpinned in tools.lock")
+			out.failedScan(cfg, sarif.Category{Tool: td.name}, td.name, "unpinned in tools.lock")
 			continue
 		}
 		start := time.Now()
@@ -98,7 +101,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 		if err != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: fetch failed: %v", td.name, err))
 			out.Skipped[td.name] = "fetch failed"
-			out.fail(cfg, td.name, td.name, "fetch failed")
+			out.failedScan(cfg, sarif.Category{Tool: td.name}, td.name, "fetch failed")
 			continue
 		}
 		if td.name == "trivy" {
@@ -116,7 +119,7 @@ func Run(ctx context.Context, root string, cfg config.Config, lock Lock) (*Outco
 		}
 		if rep == nil {
 			out.Skipped[td.name] = "no output"
-			out.fail(cfg, td.name, td.name, "exited non-zero without a report")
+			out.failedScan(cfg, sarif.Category{Tool: td.name}, td.name, "exited non-zero without a report")
 			continue
 		}
 		tagDriver(rep, td.name)

@@ -9,7 +9,12 @@ import (
 	"time"
 
 	"github.com/catenahq/scanctl/internal/config"
+	"github.com/catenahq/scanctl/internal/sarif"
 )
+
+// licenseCategory is the code-scanning category of the license pass, which is
+// the whole of its tool: a failed scan leaves it out of the upload.
+var licenseCategory = sarif.Category{Tool: "trivy-license"}
 
 // licenseStep runs trivy's license scanner over the repo as a separate pass and
 // merges it under the driver "trivy-license". It is a distinct driver (not the
@@ -27,20 +32,20 @@ func licenseStep(ctx context.Context, cfg config.Config, lock Lock, root string,
 	if err != nil {
 		out.Warnings = append(out.Warnings, err.Error())
 		out.Skipped["trivy-license"] = "unpinned"
-		out.fail(cfg, "trivy-license", "trivy-license", "unpinned in tools.lock")
+		out.failedScan(cfg, licenseCategory, "trivy-license", "unpinned in tools.lock")
 		return
 	}
 	bin, err := trivyEnsure(ctx, entry)
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-license: fetch failed: %v", err))
 		out.Skipped["trivy-license"] = "fetch failed"
-		out.fail(cfg, "trivy-license", "trivy-license", "fetch failed")
+		out.failedScan(cfg, licenseCategory, "trivy-license", "fetch failed")
 		return
 	}
 	outFile, err := os.CreateTemp("", "scanctl-trivy-license-*.sarif")
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-license: temp file: %v", err))
-		out.fail(cfg, "trivy-license", "trivy-license", err.Error())
+		out.failedScan(cfg, licenseCategory, "trivy-license", err.Error())
 		return
 	}
 	outPath := outFile.Name()
@@ -68,6 +73,6 @@ func licenseStep(ctx context.Context, cfg config.Config, lock Lock, root string,
 		out.Ran = append(out.Ran, "trivy-license")
 	}
 	if failure != "" {
-		out.fail(cfg, "trivy-license", "trivy-license", failure)
+		out.failedScan(cfg, licenseCategory, "trivy-license", failure)
 	}
 }

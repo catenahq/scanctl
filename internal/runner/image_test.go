@@ -470,6 +470,71 @@ func TestAFailedImageScanLeavesItsCategoryOut(t *testing.T) {
 	}
 }
 
+// A failed fs scan leaves trivy's default category out of the written report
+// even though the own-image scan reported into it: written, that run would hold
+// the own-image findings alone and close every fs alert. The report keeps every
+// finding for the summary and the gate.
+func TestAFailedFsScanLeavesItsSharedCategoryOut(t *testing.T) {
+	fakeTrivyFailsTheFsScan(t, map[string]string{"app:ci": trivyReport("CVE-2026-2", "7.5")})
+	cfg := config.Config{
+		Tools:     map[string]config.ToolConfig{"trivy": {Enabled: true, Mode: config.ModeBlock}},
+		OwnImages: []string{"app:ci"},
+	}
+	lock := Lock{Tools: map[string]LockEntry{"trivy": {Version: "1"}}}
+	out, err := Run(context.Background(), t.TempDir(), cfg, lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "scanctl.sarif")
+	if err := report.WriteSARIF(out.Report, path, out.Incomplete); err != nil {
+		t.Fatal(err)
+	}
+	written, err := sarif.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range written.Runs {
+		if run.Category() == ownImages {
+			t.Errorf("written %v run = %+v, want none: the fs scan did not run", run.Category(), run)
+		}
+	}
+	if out.Failed["trivy"] == "" {
+		t.Errorf("Failed = %v, want the failed fs scan listed", out.Failed)
+	}
+	if out.Report.ResultCount() != 1 {
+		t.Errorf("report findings = %d, want the own image's alone", out.Report.ResultCount())
+	}
+}
+
+// fakeTrivyFailsTheFsScan stands in for trivy for the length of the test: the
+// database download does nothing, the fs scan exits 1 with no report, and an
+// image scan copies reports[ref] to its --output.
+func fakeTrivyFailsTheFsScan(t *testing.T, reports map[string]string) {
+	t.Helper()
+	dir := t.TempDir()
+	name := strings.NewReplacer("/", "_", ":", "_")
+	for ref, body := range reports {
+		writeFile(t, dir, name.Replace(ref)+".sarif", body)
+	}
+	bin := filepath.Join(t.TempDir(), "trivy")
+	writeFile(t, filepath.Dir(bin), "trivy", "#!/bin/sh\n"+
+		"for a; do\n  [ \"$a\" = --download-db-only ] && exit 0\n  [ \"$prev\" = --output ] && out=$a\n  prev=$a\ndone\n"+
+		"[ -n \"$out\" ] || exit 1\n"+
+		"src=\""+dir+"/$(printf %s \"$prev\" | tr /: __).sarif\"\n"+
+		"[ -f \"$src\" ] || exit 1\ncp \"$src\" \"$out\"\n")
+	if err := os.Chmod(bin, 0o700); err != nil { // #nosec G302 -- a test stand-in for the trivy binary
+		t.Fatal(err)
+	}
+	saved := registry
+	t.Cleanup(func() { registry = saved })
+	registry = []toolDef{{
+		name:    "trivy",
+		applies: func(detect.Result) bool { return true },
+		ensure:  func(context.Context, LockEntry, string) (string, error) { return bin, nil },
+		invoke:  func(_, _, _ string, _ detect.Result) invocation { return invocation{} },
+	}}
+}
+
 // A third-party image's run goes in the image category even when the image is
 // clean; an own image's stays in the default one, with the fs scan.
 func TestTagImageFilesAThirdPartyImageInTheImageCategory(t *testing.T) {

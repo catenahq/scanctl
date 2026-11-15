@@ -33,8 +33,8 @@ var (
 // report uploads the third-party runs as tool sarif.ImageTool. Each
 // finding records its image under ImageProperty, or OwnImageProperty for an
 // image the repo builds. A ref whose scan fails is retried once (registry
-// pulls fail transiently), then recorded in out.Failed, and its category in
-// out.Incomplete. ignore is the trivy ignore file passed to every scan, or ""
+// pulls fail transiently), then recorded in out.Failed and in out.Incomplete
+// under its category. ignore is the trivy ignore file passed to every scan, or ""
 // for none.
 //
 // The returned error is reserved for a pin that resolves to nothing, which is
@@ -59,9 +59,9 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 	if len(jobs) == 0 {
 		return nil
 	}
-	unscanned := func(jobs ...job) {
+	unscanned := func(reason string, jobs ...job) {
 		for _, j := range jobs {
-			out.Incomplete[j.category] = true
+			out.failedScan(cfg, j.category, "trivy-image", reason)
 		}
 	}
 	tc, ok := cfg.Tools["trivy"]
@@ -73,16 +73,14 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 	if err != nil {
 		out.Warnings = append(out.Warnings, err.Error())
 		out.Skipped["trivy-image"] = "unpinned"
-		out.fail(cfg, "trivy", "trivy-image", "unpinned in tools.lock")
-		unscanned(jobs...)
+		unscanned("unpinned in tools.lock", jobs...)
 		return nil
 	}
 	bin, err := trivyEnsure(ctx, entry)
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("trivy-image: fetch failed: %v", err))
 		out.Skipped["trivy-image"] = "fetch failed"
-		out.fail(cfg, "trivy", "trivy-image", "fetch failed")
-		unscanned(jobs...)
+		unscanned("fetch failed", jobs...)
 		return nil
 	}
 
@@ -97,8 +95,7 @@ func imageStep(ctx context.Context, cfg config.Config, lock Lock, root, ignore s
 			ran = true
 		}
 		if failure != "" {
-			out.fail(cfg, "trivy", j.ref, failure)
-			unscanned(j)
+			out.failedScan(cfg, j.category, j.ref, failure)
 		}
 	}
 	if ran {
