@@ -266,6 +266,11 @@ func runCmd(args []string) int {
 				} else if n > 0 {
 					fmt.Printf("dismiss-baseline: closed %d matching GitHub alert(s)\n", n)
 				}
+				if n, err := gh.Reopen(context.Background(), out.Report, expired); err != nil {
+					fmt.Fprintln(os.Stderr, "warning: dismiss-baseline:", err)
+				} else if n > 0 {
+					fmt.Printf("dismiss-baseline: reopened %d GitHub alert(s) whose acceptance expired\n", n)
+				}
 			}
 		}
 	}

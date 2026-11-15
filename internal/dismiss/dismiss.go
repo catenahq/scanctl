@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/catenahq/scanctl/internal/baseline"
 	"github.com/catenahq/scanctl/internal/sarif"
 )
 
@@ -58,8 +59,9 @@ func FromEnv() (Client, bool) {
 }
 
 type alert struct {
-	Number int `json:"number"`
-	Rule   struct {
+	Number           int    `json:"number"`
+	DismissedComment string `json:"dismissed_comment"`
+	Rule             struct {
 		ID string `json:"id"`
 	} `json:"rule"`
 	Tool struct {
@@ -99,7 +101,7 @@ func (c Client) Dismiss(ctx context.Context, rep *sarif.Report) (int, error) {
 		return 0, nil
 	}
 
-	alerts, err := c.listOpenAlerts(ctx)
+	alerts, err := c.listAlerts(ctx, "open")
 	if err != nil {
 		return 0, fmt.Errorf("dismiss: list alerts: %w", err)
 	}
@@ -110,8 +112,55 @@ func (c Client) Dismiss(ctx context.Context, rep *sarif.Report) (int, error) {
 		if !wanted[k] {
 			continue
 		}
-		if err := c.dismissAlert(ctx, a.Number); err != nil {
+		if err := c.setAlert(ctx, a.Number, dismissBody); err != nil {
 			return n, fmt.Errorf("dismiss: alert #%d: %w", a.Number, err)
+		}
+		n++
+	}
+	return n, nil
+}
+
+// Reopen reopens every alert this tool dismissed whose finding now matches an
+// expired baseline entry: the entry accepts nothing, so the finding gates and
+// its alert must show open. An alert someone else dismissed is left alone.
+// Returns the count reopened.
+func (c Client) Reopen(ctx context.Context, rep *sarif.Report, expired []baseline.Entry) (int, error) {
+	gone := map[string]bool{}
+	for _, e := range expired {
+		gone[sarif.Fingerprint(e.Tool, e.Result)] = true
+	}
+	wanted := map[string]bool{}
+	for _, run := range rep.Runs {
+		tool := run.UploadTool()
+		for _, r := range run.Results {
+			if acceptedInBaseline(r) || len(r.Locations) == 0 || !gone[sarif.Fingerprint(run.Tool.Driver.Name, r)] {
+				continue
+			}
+			pl := r.Locations[0].PhysicalLocation
+			line := 0
+			if pl.Region != nil {
+				line = pl.Region.StartLine
+			}
+			wanted[matchKey(tool, r.RuleID, pl.ArtifactLocation.URI, line)] = true
+		}
+	}
+	if len(wanted) == 0 {
+		return 0, nil
+	}
+
+	alerts, err := c.listAlerts(ctx, "dismissed")
+	if err != nil {
+		return 0, fmt.Errorf("reopen: list alerts: %w", err)
+	}
+
+	n := 0
+	for _, a := range alerts {
+		k := matchKey(a.Tool.Name, a.Rule.ID, a.MostRecentInstance.Location.Path, a.MostRecentInstance.Location.StartLine)
+		if !wanted[k] || a.DismissedComment != dismissComment {
+			continue
+		}
+		if err := c.setAlert(ctx, a.Number, map[string]any{"state": "open"}); err != nil {
+			return n, fmt.Errorf("reopen: alert #%d: %w", a.Number, err)
 		}
 		n++
 	}
@@ -136,9 +185,9 @@ func matchKey(tool, ruleID, path string, line int) string {
 	return fmt.Sprintf("%s\x00%s\x00%s\x00%d", strings.ToLower(tool), ruleID, path, line)
 }
 
-func (c Client) listOpenAlerts(ctx context.Context) ([]alert, error) {
+func (c Client) listAlerts(ctx context.Context, state string) ([]alert, error) {
 	var all []alert
-	url := fmt.Sprintf("%s/repos/%s/%s/code-scanning/alerts?state=open&per_page=100", c.BaseURL, c.Owner, c.Repo)
+	url := fmt.Sprintf("%s/repos/%s/%s/code-scanning/alerts?state=%s&per_page=100", c.BaseURL, c.Owner, c.Repo, state)
 	for url != "" {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
@@ -184,12 +233,16 @@ func nextLink(h string) string {
 	return ""
 }
 
-func (c Client) dismissAlert(ctx context.Context, number int) error {
-	body, err := json.Marshal(map[string]any{
-		"state":             "dismissed",
-		"dismissed_reason":  "won't fix",
-		"dismissed_comment": "matches committed scanctl baseline (.scanctl/baseline.sarif)",
-	})
+const dismissComment = "matches committed scanctl baseline (.scanctl/baseline.sarif)"
+
+var dismissBody = map[string]any{
+	"state":             "dismissed",
+	"dismissed_reason":  "won't fix",
+	"dismissed_comment": dismissComment,
+}
+
+func (c Client) setAlert(ctx context.Context, number int, fields map[string]any) error {
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return err
 	}
