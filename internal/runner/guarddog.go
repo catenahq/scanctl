@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/catenahq/scanctl/internal/config"
+	"github.com/catenahq/scanctl/internal/sarif"
 )
 
 // guarddogManifests maps a GuardDog ecosystem subcommand to the root manifest it
@@ -24,6 +25,11 @@ var guarddogManifests = []struct {
 	{"npm", "package-lock.json"},
 	{"go", "go.mod"},
 }
+
+// guarddogCategory is the code-scanning category every guarddog scan writes
+// into: the manifests it verifies share one run, so a manifest whose scan fails
+// leaves the whole category out of the upload.
+var guarddogCategory = sarif.Category{Tool: "guarddog"}
 
 // guarddogStep runs GuardDog (malicious-package heuristics) over each supported
 // root manifest and merges the SARIF. It is gated on cfg.Tools["guarddog"] and
@@ -52,7 +58,7 @@ func guarddogStep(ctx context.Context, cfg config.Config, lock Lock, root string
 	if err != nil {
 		out.Warnings = append(out.Warnings, err.Error())
 		out.Skipped["guarddog"] = "unpinned"
-		out.fail(cfg, "guarddog", "guarddog", "unpinned in tools.lock")
+		out.failedScan(cfg, guarddogCategory, "guarddog", "unpinned in tools.lock")
 		return
 	}
 	start := time.Now()
@@ -61,7 +67,7 @@ func guarddogStep(ctx context.Context, cfg config.Config, lock Lock, root string
 	if err != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("guarddog: fetch failed: %v", err))
 		out.Skipped["guarddog"] = "fetch failed"
-		out.fail(cfg, "guarddog", "guarddog", "fetch failed")
+		out.failedScan(cfg, guarddogCategory, "guarddog", "fetch failed")
 		return
 	}
 
@@ -70,7 +76,7 @@ func guarddogStep(ctx context.Context, cfg config.Config, lock Lock, root string
 		outFile, err := os.CreateTemp("", "scanctl-guarddog-*.sarif")
 		if err != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("guarddog: temp file: %v", err))
-			out.fail(cfg, "guarddog", "guarddog "+j.manifest, err.Error())
+			out.failedScan(cfg, guarddogCategory, "guarddog "+j.manifest, err.Error())
 			continue
 		}
 		outPath := outFile.Name()
@@ -86,7 +92,7 @@ func guarddogStep(ctx context.Context, cfg config.Config, lock Lock, root string
 			ran = true
 		}
 		if failure != "" {
-			out.fail(cfg, "guarddog", "guarddog "+j.manifest, failure)
+			out.failedScan(cfg, guarddogCategory, "guarddog "+j.manifest, failure)
 		}
 		_ = os.Remove(outPath)
 	}

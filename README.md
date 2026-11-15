@@ -369,13 +369,17 @@ scanning, Tool status, Trivy, `images`, Delete configuration). Code
 scanning refuses a file holding two runs of one tool and category, or more
 than 20 runs, so the upload goes through whatever the number of images a scan
 covers. An analysis closes every alert of its tool and category it does not
-report and leaves the other categories' alerts as they were, so a run that
-scans only the pins its change touched writes no `images` run, and a run where
-an image's scan failed after its retry writes no run in that image's category
-(`images`, or trivy's default for an image the repo builds): an image alert
-opens or closes on a run that scans every image of its category, such as a
-scheduled one. Until then, the alerts of the images that did scan stay as they
-were too. The summary and the gate still read every image finding.
+report and leaves the other categories' alerts as they were, so scanctl writes
+no run for a category one of its scans did not complete: a run that scans only
+the pins its change touched writes no `images` run; a run where an image's scan
+failed after its retry writes no run in that image's category (`images`, or
+trivy's default for an image the repo builds); and a run where trivy's fs scan
+or one guarddog manifest's scan failed writes no run in that tool's default
+category, even though another scan (the repo's own images, another manifest)
+reported into it. An alert therefore opens or closes only on a run that scanned
+everything its category covers, such as a scheduled one. Until then, the alerts
+of the scans that did report stay as they were too. The summary and the gate
+still read every finding.
 
 Code scanning reads a finding's severity from its rule, so an image finding's
 rule id is the advisory followed by the image's repository
