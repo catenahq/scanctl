@@ -43,7 +43,7 @@ tools:
       v1.57.1/syft_1.57.1_linux_amd64.tar.gz: bf52519eb57f675d47c07d43213cb6dff6449f3d6d1147ff6701ed91f44eef0c
   semgrep:
     # renovate: datasource=pypi depName=semgrep
-    version: 1.184.0
+    version: 1.185.0
   zizmor:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
