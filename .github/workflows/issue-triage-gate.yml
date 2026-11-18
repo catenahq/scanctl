@@ -1,0 +1,17 @@
+name: Issue Triage Gate
+
+permissions:
+  issues: write
+  contents: read
+
+on:
+  issues:
+    types: [opened, reopened]
+
+jobs:
+  triage:
+    uses: marcusquinn/aidevops/.github/workflows/issue-triage-gate-reusable.yml@main
+    secrets:
+      AIDEVOPS_READ_TOKEN: ${{ secrets.AIDEVOPS_READ_TOKEN }}
+    with:
+      aidevops_ref: main
