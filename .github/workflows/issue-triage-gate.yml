@@ -10,7 +10,7 @@ on:
 
 jobs:
   triage:
-    uses: marcusquinn/aidevops/.github/workflows/issue-triage-gate-reusable.yml@main
+    uses: marcusquinn/aidevops/.github/workflows/issue-triage-gate-reusable.yml@1621a84914956c415717fbd8c9de31a10fdf2743 # main
     secrets:
       AIDEVOPS_READ_TOKEN: ${{ secrets.AIDEVOPS_READ_TOKEN }}
     with:
