@@ -4,10 +4,10 @@ name: CI
 # source, gated like every caller. Its SARIF is uploaded to code scanning.
 
 on:
-  # Every pushed branch. Renovate and engine-bump branches always carry a pull
-  # request, which tests each push to them.
+  # A change is checked once, on its pull request, Renovate's included. A push
+  # runs the checks only on the default branch.
   push:
-    branches-ignore: ['renovate/**', 'engine-bump/**', 'scanctl/**']
+    branches: [main]
   pull_request:
 
 permissions:
