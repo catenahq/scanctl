@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   ci:
-    uses: catenahq/contracts/.github/workflows/pr.yml@1ce3a8a97781787c72f8f6d846ced10bcfbf8c76 # main
+    uses: catenahq/contracts/.github/workflows/pr.yml@ff0e094463a8ae95aaca41ff5e4a5d5fd339bb7e # main
     permissions:
       contents: read
       actions: read

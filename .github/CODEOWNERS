@@ -1,0 +1,4 @@
+# The paths whose code runs in CI ask for the owner's review; no review is
+# required.
+/.github/ @ma-lalonde
+/ci/ @ma-lalonde
