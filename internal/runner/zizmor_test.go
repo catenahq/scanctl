@@ -7,9 +7,9 @@ import (
 )
 
 func TestZizmorPolicyExemptsFirstParty(t *testing.T) {
-	// The bundled policy must let catenahq/* ref-pin (the intentional @main
-	// reusable-workflow ref) while requiring everything else to hash-pin,
-	// otherwise flipping zizmor to block self-gates every caller's security.yml.
+	// The bundled policy must let catenahq/* ref-pin while requiring
+	// everything else to hash-pin, otherwise zizmor in block mode gates every
+	// caller's workflows on first-party refs.
 	s := string(zizmorPolicy)
 	for _, want := range []string{"unpinned-uses", "catenahq/*: ref-pin", `"*": hash-pin`} {
 		if !strings.Contains(s, want) {

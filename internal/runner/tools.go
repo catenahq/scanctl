@@ -182,8 +182,8 @@ var registry = []toolDef{
 		ensure:   releaseEnsure("zizmor"),
 		invoke: func(bin, root, out string, _ detect.Result) invocation {
 			args := []string{"--format", "sarif", "--persona", "regular"}
-			// Bundled policy: first-party catenahq/* may ref-pin (intentional
-			// @main reusable workflow), third-party must hash-pin. --config is
+			// Bundled policy: first-party catenahq/* may ref-pin,
+			// third-party must hash-pin. --config is
 			// safe here because scanctl audits a single input source (root).
 			if cfgPath, err := zizmorConfigPath(); err == nil {
 				args = append(args, "--config", cfgPath)
