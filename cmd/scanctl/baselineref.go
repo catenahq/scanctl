@@ -167,8 +167,8 @@ func mergeBase(ctx context.Context, root, ref string) (string, error) {
 // root is the checkout the diff runs in; statRoot is the tree a glob pin's
 // matched file must exist in, because the base worktree does not hold the
 // paths HEAD added. baseSide names each kept pin as the base branch had it, so
-// a file git detects as renamed resolves the pin from the path it was renamed
-// FROM: that path is where the merge base still carries the image whose
+// a file git detects as a rename resolves the pin from the path it had before
+// the rename: that path is where the merge base still carries the image whose
 // findings must suppress its new path's.
 //
 // Compared against the WORKING TREE rather than HEAD, because the working tree

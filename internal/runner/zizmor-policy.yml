@@ -5,9 +5,16 @@
 # guarded by branch protection on catenahq/scanctl, not a version pin, so it
 # auto-updates without a digest bump across every caller. Third-party actions
 # must still be hash-pinned. Most-specific pattern wins; "*" is last.
+#
+# dangerous-triggers: ci-control.yml is the caller of the shared control
+# workflow, and its pull_request_target and workflow_run triggers are the point
+# of it. It is the only file the audit is ignored for.
 rules:
   unpinned-uses:
     config:
       policies:
         catenahq/*: ref-pin
         "*": hash-pin
+  dangerous-triggers:
+    ignore:
+      - ci-control.yml

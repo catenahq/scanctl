@@ -84,7 +84,7 @@ func TestWriteUploadSetCarriesEveryImageUnderItsOwnCategory(t *testing.T) {
 }
 
 // A SARIF file an earlier upload set left in the directory is removed, so a
-// category this run no longer carries stops uploading.
+// category this run does not carry stops uploading.
 func TestWriteUploadSetClearsTheEarlierFiles(t *testing.T) {
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "999.sarif")

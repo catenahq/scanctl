@@ -82,7 +82,7 @@ func acceptImages(existing, in *sarif.Report, cfg config.Config, until string, n
 	// entry whose finding is still reported is not removed.
 	reported := map[string]bool{}
 	// scanned names each image category the input holds a run for. An entry is
-	// removed only when the run scanned that image and no longer reports the
+	// removed only when the run scanned that image and does not report the
 	// finding: a push run that scanned one pin's image leaves the other images'
 	// entries alone.
 	scanned := map[string]bool{}

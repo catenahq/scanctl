@@ -56,7 +56,11 @@ passed via `--config`): first-party `catenahq/*` actions may be ref-pinned, ever
 third-party `uses:` must be hash-pinned. This lets the reusable security workflow
 stay at `@main` (auto-updating, guarded by branch protection on the scanctl repo
 rather than a per-caller digest pin) while still gating on unpinned third-party
-actions and every other high-severity workflow finding.
+actions and every other high-severity workflow finding. The policy's second
+rule ignores the `dangerous-triggers` audit for a file named `ci-control.yml`
+alone (the caller of the shared control workflow, whose `pull_request_target`
+and `workflow_run` triggers are its purpose); any other workflow with such a
+trigger is still reported.
 
 gitleaks scans the history of the commit being scanned, with a bundled config
 ([`internal/runner/gitleaks.toml`](internal/runner/gitleaks.toml)): gitleaks'
