@@ -1,116 +1,22 @@
-name: CI
-
-# Build/vet/test the scanctl binary, then dogfood it: run scanctl on its own
-# source, gated like every caller. Its SARIF is uploaded to code scanning.
-
+name: ci
 on:
-  # A change is checked once, on its pull request, Renovate's included. A push
-  # runs the checks only on the default branch.
-  push:
-    branches: [main]
   pull_request:
-
-permissions:
-  contents: read
-
-# A newer push to the branch, or a newer commit of the pull request, cancels the
-# run it supersedes.
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '41 6 * * *'
+permissions: {}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  same-tree:
-    # Reuses the result of an earlier run on the same tree; every job below
-    # needs it.
-    name: same tree (ci)
-    runs-on: ubuntu-26.04
+  ci:
+    uses: catenahq/contracts/.github/workflows/pr.yml@1ce3a8a97781787c72f8f6d846ced10bcfbf8c76 # main
     permissions:
       contents: read
       actions: read
-    outputs:
-      run: ${{ steps.tree.outputs.run }}
-    steps:
-      - id: tree
-        uses: catenahq/contracts/.github/actions/same-tree@89d3994d7cc56eaf9e7136e4dc4823dbd606880a # main
-        with:
-          siblings: catenahq/contracts
-
-  test:
-    name: build + vet + test
-    needs: same-tree
-    if: needs.same-tree.outputs.run != 'false'
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version: stable
-      - run: go version
-      - run: go build ./...
-      - run: go vet ./...
-      - run: go test ./...
-
-  repo-rules:
-    # Rules every catena repo keeps. The check lives in catenahq/contracts and
-    # runs from there.
-    name: Repo rules
-    needs: same-tree
-    if: needs.same-tree.outputs.run != 'false'
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          path: scanctl
-          persist-credentials: false
-      - name: Check out sibling contracts
-        uses: catenahq/contracts/.github/actions/checkout-sibling@8f5ec2c7e52d68a2fd22ef4977b295d21380e089 # main
-        with:
-          repository: catenahq/contracts
-          path: contracts
-          lock: scanctl/.github/catenahq.lock
-      - name: Repo rules (no tracked env file; .gitignore carries the env rule)
-        working-directory: ./scanctl
-        run: node ../contracts/scripts/check-repo-rules.mjs
-
-  self-scan:
-    name: scanctl scans scanctl (dogfood)
-    needs: same-tree
-    if: needs.same-tree.outputs.run != 'false'
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
+      statuses: write
+      pull-requests: write
       security-events: write
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version: stable
-      - name: Install uv
-        # uv backs guarddog, lazy-fetched at scan time.
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - name: Build scanctl
-        run: go build -o scanctl ./cmd/scanctl
-      - name: Run scanctl on itself
-        env:
-          # zizmor's API-backed audits use this when present; absent = --offline.
-          GH_TOKEN: ${{ github.token }}
-        run: ./scanctl run --out scanctl.sarif --summary "$GITHUB_STEP_SUMMARY" .
-      - name: Upload SARIF to code scanning
-        if: always()
-        uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463 # v4
-        with:
-          sarif_file: scanctl.sarif
-        continue-on-error: true
-      - name: Upload SARIF artifact
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: scanctl-sarif
-          path: scanctl.sarif
-          if-no-files-found: ignore
+      issues: write
+    with:
+      runner: ubuntu-26.04

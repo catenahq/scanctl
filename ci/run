@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Runs one check of this repository by its name in .github/checks.yml, the same
+# in CI and on a workstation: bash ci/run <name>.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+case "${1:-}" in
+  go)
+    go build ./...
+    go vet ./...
+    go test ./...
+    ;;
+  *)
+    echo "ci/run: unknown check '${1:-}' (checks: go)" >&2
+    exit 2
+    ;;
+esac
