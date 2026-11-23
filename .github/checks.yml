@@ -1,0 +1,5 @@
+gates: {}
+checks:
+  go:
+    tools: {go: go.mod}
+scan: {}

@@ -96,7 +96,7 @@ jobs:
       run: ${{ steps.tree.outputs.run }}
     steps:
       - id: tree
-        uses: catenahq/contracts/.github/actions/same-tree@89d3994d7cc56eaf9e7136e4dc4823dbd606880a # main
+        uses: catenahq/contracts/.github/actions/same-tree@b1a900783044f4453a2c7af1289501da0c086590 # main
         with:
           siblings: catenahq/scanctl
 
