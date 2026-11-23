@@ -160,9 +160,8 @@ type DependencyTrackConfig struct {
 // every scanner whose findings a change to the repo can fix in block mode --
 // dependency CVEs (osv, trivy, govulncheck), SAST (gosec, semgrep), secrets
 // (gitleaks), workflow supply chain (zizmor), malicious packages (guarddog).
-// zizmor's one known false positive, unpinned first-party @main
-// reusable-workflow refs, is exempted by the bundled policy (catenahq/* may
-// ref-pin; third-party must hash-pin; see runner/zizmor.go). trivy-license
+// zizmor's bundled policy lets first-party catenahq/* actions ref-pin and
+// requires third-party ones to hash-pin (see runner/zizmor.go). trivy-license
 // reports: a copyleft license is a policy question, not a vulnerability.
 // semgrep is fullOnly, so it only actually runs under the "full" profile
 // (catena's internal scanctl.yml sets that).

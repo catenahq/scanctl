@@ -49,13 +49,11 @@ module with the go/types it was built with, and runs under that toolchain, so it
 grades that toolchain's standard library even when the runner sets
 `GOTOOLCHAIN=local`; the Python tools (semgrep, guarddog) are installed with
 `uv tool install`. **Runner prerequisites:** `go` and `uv` on `PATH` (the
-reusable workflow sets both up).
+scan of contracts' shared pull request workflow sets both up).
 
 zizmor runs in **block** mode with a bundled policy ([`internal/runner/zizmor-policy.yml`](internal/runner/zizmor-policy.yml),
 passed via `--config`): first-party `catenahq/*` actions may be ref-pinned, every
-third-party `uses:` must be hash-pinned. This lets the reusable security workflow
-stay at `@main` (auto-updating, guarded by branch protection on the scanctl repo
-rather than a per-caller digest pin) while still gating on unpinned third-party
+third-party `uses:` must be hash-pinned. It gates on unpinned third-party
 actions and every other high-severity workflow finding.
 
 gitleaks scans the history of the commit being scanned, with a bundled config
@@ -75,9 +73,8 @@ from the rollout).
 
 The license scan is a second trivy pass under its own `trivy-license` driver
 (report-mode by design: copyleft/unknown licenses are advisory and must not
-inherit the fs scan's blocking gate). The reusable workflow also emits a syft
-CycloneDX SBOM (`sbom.cdx.json`) and uploads it as an artifact -- together these
-fold in the old standalone `licenses-sbom` workflow.
+inherit the fs scan's blocking gate). `--sbom` writes a syft CycloneDX SBOM
+(`sbom.cdx.json`), which the shared scan uploads as an artifact.
 
 ## Install
 
@@ -89,8 +86,7 @@ Public module, so this needs nothing beyond `go` on `PATH` -- no `GOPRIVATE`,
 no auth. Installs to `$(go env GOPATH)/bin`; put that on `PATH` (or invoke it
 as `"$(go env GOPATH)/bin/scanctl"`, since a runner's own `PATH` isn't
 guaranteed to include it). Pin `@vX.Y.Z` or a commit for a reproducible
-one-off run. The reusable workflow installs the scanctl branch named like the
-caller's when there is one, else its `scanctl-version` input (see "In CI").
+one-off run. The shared scan builds scanctl at a pinned commit (see "In CI").
 
 ## Usage
 
@@ -156,7 +152,7 @@ that has a fixed version fails it. That is where a CVE published against an
 image nobody touched surfaces. An image finding with no fixed version, such as
 a placeholder key trivy finds in an image, is reported without gating. A CVE no
 image tag ships the fix for yet is accepted, for a while, in the committed
-baseline. Every caller, the reusable workflow or an inline `scanctl run`, gets
+baseline. Every caller, the shared scan or an inline `scanctl run`, gets
 the same behaviour.
 
 A dependency vulnerability in an image is matched across the two scans by
@@ -172,8 +168,7 @@ in it is marked suppressed (`kind: external`) in the merged SARIF -- the gate
 skips it, and it stays in the SARIF for audit. An entry the scan no longer
 produces fails the run and is listed under "Stale baseline entries": it would
 accept the finding again if it came back, so it is removed instead. A missing
-baseline file is a no-op. The reusable workflow exposes it as the `baseline`
-input, defaulting to `.scanctl/baseline.sarif`.
+baseline file is a no-op. The shared scan passes `.scanctl/baseline.sarif`.
 
 An entry may carry an `acceptedUntil` date (`YYYY-MM-DD`) in its properties.
 After that date it accepts nothing, the summary lists it under "Expired
@@ -201,8 +196,8 @@ run fails on; an alert someone else dismissed is left alone. Requires
 `GITHUB_REPOSITORY` + `GH_TOKEN`/`GITHUB_TOKEN` (both already present in
 Actions); a no-op outside that environment, and always skipped on
 `pull_request` events -- a feature-branch run is never the source of truth for
-what the org has accepted repo-wide. The reusable workflow enables it by
-default (`dismiss-baseline: true`) whenever `baseline` is set.
+what the org has accepted repo-wide. The shared scan passes it with the
+baseline.
 
 #### Seeding or regenerating a baseline
 
@@ -347,18 +342,13 @@ owns a database lifecycle scanctl deliberately does not embed:
 
 ### In CI
 
-Call the reusable workflow ([`.github/workflows/github-reusable.yml`](.github/workflows/github-reusable.yml)):
-
-```yaml
-jobs:
-  security:
-    uses: catenahq/scanctl/.github/workflows/github-reusable.yml@main
-    permissions:
-      actions: read            # the same-tree lookup of earlier runs
-      contents: read
-      security-events: write   # code-scanning upload (public / GHAS repos)
-      pull-requests: write     # sticky findings comment (private-repo parity)
-```
+A catenahq repository runs scanctl in the `scan` job of the shared pull request
+workflow of contracts (`catenahq/contracts/.github/workflows/pr.yml`), which its
+`ci.yml` calls and its `.github/checks.yml` configures with a `scan` key; a
+scheduled run scans in the `scan-daily` job. The job builds scanctl at the
+commit the `catenahq/scanctl` line of contracts' `.github/catenahq.lock` pins,
+and runs `scanctl run` with `--baseline .scanctl/baseline.sarif`,
+`--dismiss-baseline` and `--own-image` for each image the repo built.
 
 The SARIF scanctl writes holds one run per tool and code-scanning category:
 the fs scan and the own images are one trivy run, and every third-party image
@@ -372,8 +362,7 @@ quality, Code scanning, Tool status, Trivy, `images`, Delete configuration).
 
 Code scanning refuses a file holding two runs of one tool and category, or
 more than 20 runs, so `--upload-dir` writes the upload set as a directory of
-SARIF files, each holding at most 20 runs, which is what the reusable workflow
-passes to `upload-sarif`. An analysis closes every alert of its tool and
+SARIF files, each holding at most 20 runs. An analysis closes every alert of its tool and
 category it does not report and leaves the other categories' alerts as they
 were, so scanctl writes no run for a category one of its scans did not
 complete: a run that scans only the pins its change touched writes runs for
@@ -393,26 +382,14 @@ rule id is the advisory followed by the image's repository
 score. The repository leaves out the tag, so a bump keeps the rule id.
 
 A private repo skips the code-scanning upload, which needs Advanced Security
-there, so the workflow also (a) posts the findings summary as one sticky PR
-comment (updated in place) and (b) uploads `scanctl.sarif`, the `scanctl-sarif/`
-upload set and the SBOM as a downloadable artifact. Together with `--baseline`
-these give private repos the same triage surface as the public Security tab. Inputs: `baseline`,
-`dismiss-baseline`, `import-sarif`, `profile`, `no-gate`, `path`, `runner`,
-`scanctl-version`, and `pre-scan` + `own-images` for an image the repo builds
-(`pre-scan` runs the build, `own-images` names the refs it produced). The
-pre-scan step runs with GitHub's cache service exposed, so its `docker buildx
-build` can pass `--cache-from` and `--cache-to type=gha,version=2`; the scan
-step runs with the cache token blanked, so no scanner holds it. Optional
-secrets `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN` log the run in to Docker Hub
-before the scan, for repos pinning more images than the anonymous pull limit
-covers. A scanctl branch named like the caller's branch (a pull
-request's head, then its base) takes precedence over `scanctl-version`, so a
-scanctl change runs against every caller's branch of the same name before it
-merges. The workflow's first job, `same tree`, reuses the result of an earlier
-run of the caller's workflow on the same tree and the same scanctl branch
-(contracts' `same-tree` action), skipping the scan; a reused failure fails the
-job, and a scheduled run never reuses. The calling job must grant all four
-permissions above, or GitHub refuses to start the run.
+there, so the scan also (a) posts the findings summary as one sticky PR
+comment (updated in place) and (b) uploads `scanctl.sarif` and the SBOM as the
+downloadable artifact `scanctl-results`. Together with `--baseline`
+these give private repos the same triage surface as the public Security tab.
+The scan step runs with GitHub's cache token blanked, so no scanner holds it.
+The `scan-daily` job logs in to Docker Hub with the `DOCKERHUB_USERNAME` and
+`DOCKERHUB_TOKEN` of the caller's environment `ci` when it holds them, for
+repos pinning more images than the anonymous pull limit covers.
 
 ## Layout
 
@@ -450,8 +427,8 @@ warning, never failing the scan.
   passes run offline).
 - `full`: also runs resale-restricted tools (`fullOnly`, currently `semgrep`
   with its registry packs), for personal use or a client-operates-their-own-box
-  engagement. Catena's own repos run `full` (via `-profile full` in the reusable
-  workflow, or `profile: full` in `scanctl.yml`).
+  engagement. Catena's own repos run `full` (via `--profile full`, or
+  `profile: full` in `scanctl.yml`).
 
 ## Dependency policy (Renovate preset)
 
