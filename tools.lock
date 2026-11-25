@@ -34,16 +34,16 @@ tools:
   govulncheck:
     module: golang.org/x/vuln
     # renovate: datasource=go depName=golang.org/x/vuln
-    version: 1.9.0
+    version: 1.10.0
   syft:
     repo: anchore/syft
     # renovate: datasource=github-releases depName=anchore/syft
-    version: 1.57.1
+    version: 1.57.2
     sha256:
-      v1.57.1/syft_1.57.1_linux_amd64.tar.gz: bf52519eb57f675d47c07d43213cb6dff6449f3d6d1147ff6701ed91f44eef0c
+      v1.57.2/syft_1.57.2_linux_amd64.tar.gz: ad92bd3ec1b94a3df01d4d0aec199afa9c42b72e86da436ff5f837914d32706b
   semgrep:
     # renovate: datasource=pypi depName=semgrep
-    version: 1.185.0
+    version: 1.186.0
   zizmor:
     repo: zizmorcore/zizmor
     # renovate: datasource=github-releases depName=zizmorcore/zizmor
